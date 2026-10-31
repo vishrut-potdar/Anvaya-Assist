@@ -2,9 +2,9 @@ import { Router } from 'express';
 import QRCode from 'qrcode';
 import { withDb } from '../db.ts';
 import { config } from '../config.ts';
-import { calculateVelocityKmh, GeoPoint, CITIES } from '../geo.ts';
+import { calculateVelocityKmh, GeoPoint, CITIES, haversineKm, nearestCity } from '../geo.ts';
 import { HttpError } from '../errors.ts';
-import { parseUnitToken, verifyChain, verifyGs1Token } from '../crypto.ts';
+import { parseUnitToken, unitToken, verifyChain, verifyGs1Token } from '../crypto.ts';
 import { calculateRiskScore, RULES, BuyerVerdict } from '../rules.ts';
 import { broadcastAlert } from '../sse.ts';
 import { redis } from '../redis.ts';
@@ -60,7 +60,7 @@ function getScanRecord(unitId: string): ScanRecord {
 /**
  * Common buyer verification handler
  */
-async function performVerification({
+export async function performVerification({
   unitId,
   isTokenValid,
   lat,
@@ -668,6 +668,90 @@ router.post('/returns/process', async (req, res, next) => {
       message: `Return authenticated successfully! Unit #${unit.serial} verified intact, restocked in secure vault, refund authorized.`,
       returnAuthCode,
       unitState: 'RETURNED',
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Consumer live shipment tracking: /api/track/:tokenOrLot
+// City-level waypoints only (no partner names) to keep the public projection privacy-preserving.
+const ROAD_KMH = 55; // average Indian highway freight speed
+const ROAD_FACTOR = 1.3; // road distance vs straight line
+
+router.get('/track/demo', async (_req, res, next) => {
+  try {
+    const unit = await withDb(async (db) => {
+      const { rows: [u] } = await db.query(
+        `SELECT u.id FROM units u JOIN batches b ON b.id = u.batch_id
+         WHERE b.state = 'IN_TRANSIT' ORDER BY b.created_at DESC, u.serial ASC LIMIT 1`
+      );
+      return u;
+    });
+    if (!unit) throw new HttpError(404, 'NO_LIVE_SHIPMENT', 'No shipment is on the road right now. Re-seed the demo dataset.');
+    res.json({ ok: true, token: unitToken(unit.id) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.get('/track/:id', async (req, res, next) => {
+  try {
+    const raw = req.params.id.trim();
+    const unitId = parseUnitToken(raw);
+
+    const data = await withDb(async (db) => {
+      const { rows: [batch] } = await db.query(
+        unitId
+          ? `SELECT b.id, b.batch_code, b.product_name, b.state FROM units u JOIN batches b ON b.id = u.batch_id WHERE u.id = $1`
+          : `SELECT id, batch_code, product_name, state FROM batches WHERE batch_code = $1`,
+        [unitId || raw]
+      );
+      if (!batch) return null;
+      const { rows: events } = await db.query(
+        `SELECT type, lat, lng, occurred_at, body FROM events WHERE batch_id = $1 ORDER BY id ASC`,
+        [batch.id]
+      );
+      return { batch, events };
+    });
+
+    if (!data) throw new HttpError(404, 'NOT_FOUND', 'No shipment found for that code. Scan the QR on your pack or enter the lot number.');
+
+    const { batch, events } = data;
+    const stops = events
+      .filter((e) => e.lat != null && e.lng != null)
+      .map((e) => ({
+        step: e.type,
+        city: nearestCity({ lat: e.lat, lng: e.lng }),
+        lat: e.lat,
+        lng: e.lng,
+        at: e.occurred_at,
+      }));
+
+    let live = null;
+    const last = events[events.length - 1];
+    const destKey = last?.body?.payload?.destination;
+    if (batch.state === 'IN_TRANSIT' && last?.type === 'DISPATCHED' && last.lat != null && CITIES[destKey]) {
+      const from = { city: nearestCity({ lat: last.lat, lng: last.lng }), lat: last.lat, lng: last.lng };
+      const dest = CITIES[destKey];
+      const roadKm = haversineKm(from, dest) * ROAD_FACTOR;
+      const departedAt = new Date(last.occurred_at).getTime();
+      live = {
+        from,
+        to: { city: dest.name, lat: dest.lat, lng: dest.lng },
+        roadKm: Math.round(roadKm),
+        departedAt: new Date(departedAt).toISOString(),
+        etaAt: new Date(departedAt + (roadKm / ROAD_KMH) * 36e5).toISOString(),
+      };
+    }
+
+    res.json({
+      ok: true,
+      product: { name: batch.product_name, lot: batch.batch_code },
+      state: batch.state,
+      stops,
+      live,
+      serverTime: new Date().toISOString(),
     });
   } catch (err) {
     next(err);
