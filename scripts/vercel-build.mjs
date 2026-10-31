@@ -26,6 +26,17 @@ await build({
 });
 fs.cpSync('node_modules/@electric-sql/pglite', `${fn}/node_modules/@electric-sql/pglite`, { recursive: true });
 
+// Project env vars are available to this build step; copy the database ones into the function's
+// config too, so the API sees them at runtime even if Vercel doesn't attach them to prebuilt functions.
+const dbEnv = Object.fromEntries(
+  Object.entries(process.env).filter(([k, v]) => v && /^(DATABASE_URL|POSTGRES_URL)$/.test(k))
+);
+console.log(
+  'Database env vars visible to the build (names only):',
+  Object.keys(process.env).filter((k) => /DATABASE|POSTGRES|^PG|NEON/i.test(k)).sort().join(', ') || 'none',
+  `(VERCEL_ENV=${process.env.VERCEL_ENV || 'unset'})`
+);
+
 fs.writeFileSync(
   `${fn}/.vc-config.json`,
   JSON.stringify({
@@ -35,6 +46,7 @@ fs.writeFileSync(
     shouldAddHelpers: false,
     supportsResponseStreaming: true,
     maxDuration: 60,
+    environment: dbEnv,
   })
 );
 
