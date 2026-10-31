@@ -2,8 +2,23 @@ import { DbClient } from './db.ts';
 import { generateApiKey, generateKeyPair, keyFingerprint, sha256 } from './crypto.ts';
 
 // Private keys for partners the server signs on behalf of (demo + workspace), keyed by public key.
-// Kept in memory so later requests in this process can keep signing as the same partner.
-export const serverPrivateKeys = new Map<string, string>();
+// Persisted in custodial_keys so every serverless instance signs as the same partner; cached per process.
+const keyCache = new Map<string, string>();
+
+async function saveKey(db: DbClient, publicKey: string, privateKey: string) {
+  keyCache.set(publicKey, privateKey);
+  await db.query(
+    'INSERT INTO custodial_keys (public_key, private_key) VALUES ($1, $2) ON CONFLICT (public_key) DO NOTHING',
+    [publicKey, privateKey]
+  );
+}
+
+async function loadKey(db: DbClient, publicKey: string): Promise<string | undefined> {
+  if (keyCache.has(publicKey)) return keyCache.get(publicKey);
+  const { rows: [row] } = await db.query('SELECT private_key FROM custodial_keys WHERE public_key = $1', [publicKey]);
+  if (row) keyCache.set(publicKey, row.private_key);
+  return row?.private_key;
+}
 
 export interface Signer {
   id: string;
@@ -28,24 +43,24 @@ export async function insertPartner(
     `INSERT INTO partner_keys (partner_id, public_key, fingerprint) VALUES ($1, $2, $3)`,
     [p.id, keys.publicKey, keyFingerprint(keys.publicKey)]
   );
-  serverPrivateKeys.set(keys.publicKey, keys.privateKey);
+  await saveKey(db, keys.publicKey, keys.privateKey);
   return { ...p, privateKey: keys.privateKey };
 }
 
 /** Return a signer for an existing partner row. */
 export async function signerFor(db: DbClient, partner: any): Promise<Signer> {
-  const known = serverPrivateKeys.get(partner.public_key);
+  const known = await loadKey(db, partner.public_key);
   if (known) return { ...partner, privateKey: known };
 
-  // ponytail: key unknown to this process (e.g. a new serverless instance against an external DB), so rotate it.
-  // Older events by this partner will then fail the chain audit; clear and reload data to recover.
+  // Partner the server never held a key for (e.g. onboarded via the admin API): rotate to a custodial key.
+  // Older events by this partner will then fail the chain audit.
   const keys = generateKeyPair();
   await db.query('UPDATE partners SET public_key = $1 WHERE id = $2', [keys.publicKey, partner.id]);
   await db.query(
     `INSERT INTO partner_keys (partner_id, public_key, fingerprint) VALUES ($1, $2, $3)`,
     [partner.id, keys.publicKey, keyFingerprint(keys.publicKey)]
   );
-  serverPrivateKeys.set(keys.publicKey, keys.privateKey);
+  await saveKey(db, keys.publicKey, keys.privateKey);
   return { ...partner, public_key: keys.publicKey, privateKey: keys.privateKey };
 }
 

@@ -303,7 +303,7 @@ router.post('/reset', async (_req, res, next) => {
   try {
     await withDb(async (db) => {
       await db.query(`
-        TRUNCATE TABLE alerts, events, scans, batch_lineage, batch_participants, units, batches, partner_keys, partners CASCADE;
+        TRUNCATE TABLE alerts, events, scans, batch_lineage, batch_participants, units, batches, partner_keys, partners, custodial_keys CASCADE;
       `);
     });
     res.json({ ok: true, message: 'Database reset to fresh state' });
@@ -317,7 +317,7 @@ export async function seedFullDataset() {
   // 1. Clean slate
   await withDb(async (db) => {
     await db.query(`
-      TRUNCATE TABLE alerts, events, scans, batch_lineage, batch_participants, units, batches, partner_keys, partners CASCADE;
+      TRUNCATE TABLE alerts, events, scans, batch_lineage, batch_participants, units, batches, partner_keys, partners, custodial_keys CASCADE;
     `);
   });
 
