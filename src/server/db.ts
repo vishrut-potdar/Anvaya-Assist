@@ -206,6 +206,13 @@ CREATE TABLE IF NOT EXISTS alerts (
 );
 CREATE INDEX IF NOT EXISTS alerts_batch_idx ON alerts (batch_id);
 
+-- Private keys of partners the server signs for (demo + workspace). Stored so every
+-- serverless instance can sign as the same partner; never exposed by any route.
+CREATE TABLE IF NOT EXISTS custodial_keys (
+  public_key text PRIMARY KEY,
+  private_key text NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS scans (
   id bigserial PRIMARY KEY,
   unit_id uuid NOT NULL REFERENCES units(id),
