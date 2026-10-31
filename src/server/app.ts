@@ -1,5 +1,5 @@
 import express from 'express';
-import { initDatabase, withDb } from './db.ts';
+import { initDatabase } from './db.ts';
 import { errorHandler } from './errors.ts';
 
 import partnersRoutes from './routes/partners.ts';
@@ -8,26 +8,13 @@ import eventsRoutes from './routes/events.ts';
 import alertsRoutes from './routes/alerts.ts';
 import publicRoutes from './routes/public.ts';
 import chainRoutes from './routes/chain.ts';
-import demoRoutes, { seedFullDataset } from './routes/demo.ts';
+import demoRoutes from './routes/demo.ts';
+import workspaceRoutes from './routes/workspace.ts';
 
-// Initialize DB tables and auto-seed the demo dataset if empty.
-// Runs once per process: on boot locally, on cold start on Vercel.
+// Initialize DB tables once per process. The ledger starts empty; demo data is loaded from Settings.
 let ready: Promise<void> | null = null;
 export function ensureReady(): Promise<void> {
-  ready ??= (async () => {
-    await initDatabase();
-    try {
-      await withDb(async (db) => {
-        const { rows } = await db.query('SELECT count(*) as count FROM batches');
-        if (Number(rows[0]?.count || 0) === 0) {
-          console.log('Seeding initial HackNova PS-05 demo batches into ledger...');
-          await seedFullDataset();
-        }
-      });
-    } catch (err) {
-      console.error('Auto-seed check failed:', err);
-    }
-  })();
+  ready ??= initDatabase();
   return ready;
 }
 
@@ -56,6 +43,7 @@ app.use('/api/events', eventsRoutes);
 app.use('/api/alerts', alertsRoutes);
 app.use('/api/chain', chainRoutes);
 app.use('/api/demo', demoRoutes);
+app.use('/api/workspace', workspaceRoutes);
 app.use('/api', publicRoutes); // /api/verify/:token, /api/01/..., /api/qr/..., /api/track/...
 app.use(errorHandler);
 

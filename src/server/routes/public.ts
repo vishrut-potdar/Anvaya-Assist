@@ -4,7 +4,7 @@ import { withDb } from '../db.ts';
 import { config } from '../config.ts';
 import { calculateVelocityKmh, GeoPoint, CITIES, haversineKm, nearestCity } from '../geo.ts';
 import { HttpError } from '../errors.ts';
-import { parseUnitToken, unitToken, verifyChain, verifyGs1Token } from '../crypto.ts';
+import { parseUnitToken, verifyChain, verifyGs1Token } from '../crypto.ts';
 import { calculateRiskScore, RULES, BuyerVerdict } from '../rules.ts';
 import { broadcastAlert } from '../sse.ts';
 import { redis } from '../redis.ts';
@@ -678,22 +678,6 @@ router.post('/returns/process', async (req, res, next) => {
 // City-level waypoints only (no partner names) to keep the public projection privacy-preserving.
 const ROAD_KMH = 55; // average Indian highway freight speed
 const ROAD_FACTOR = 1.3; // road distance vs straight line
-
-router.get('/track/demo', async (_req, res, next) => {
-  try {
-    const unit = await withDb(async (db) => {
-      const { rows: [u] } = await db.query(
-        `SELECT u.id FROM units u JOIN batches b ON b.id = u.batch_id
-         WHERE b.state = 'IN_TRANSIT' ORDER BY b.created_at DESC, u.serial ASC LIMIT 1`
-      );
-      return u;
-    });
-    if (!unit) throw new HttpError(404, 'NO_LIVE_SHIPMENT', 'No shipment is on the road right now. Re-seed the demo dataset.');
-    res.json({ ok: true, token: unitToken(unit.id) });
-  } catch (err) {
-    next(err);
-  }
-});
 
 router.get('/track/:id', async (req, res, next) => {
   try {

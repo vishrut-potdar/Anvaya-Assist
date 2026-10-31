@@ -5,6 +5,7 @@ import { requireAuth, requireRole } from '../auth.ts';
 import { HttpError } from '../errors.ts';
 import { gs1HmacToken, unitToken } from '../crypto.ts';
 import { config } from '../config.ts';
+import { CITIES, nearestCity } from '../geo.ts';
 
 const router = Router();
 
@@ -79,14 +80,25 @@ router.get('/', async (_req, res, next) => {
                 m.name AS manufacturer_name,
                 h.name AS current_holder_name,
                 h.role AS current_holder_role,
+                r.role AS pending_recipient_role,
+                (SELECT json_build_object('lat', e.lat, 'lng', e.lng) FROM events e
+                  WHERE e.batch_id = b.id AND e.lat IS NOT NULL ORDER BY e.id ASC LIMIT 1) AS first_point,
+                (SELECT json_build_object('lat', e.lat, 'lng', e.lng, 'destination', e.body->'payload'->>'destination') FROM events e
+                  WHERE e.batch_id = b.id AND e.lat IS NOT NULL ORDER BY e.id DESC LIMIT 1) AS last_point,
                 (SELECT COUNT(*) FROM events e WHERE e.batch_id = b.id) AS event_count,
                 (SELECT COUNT(*) FROM alerts a WHERE a.batch_id = b.id) AS alert_count
          FROM batches b
          JOIN partners m ON m.id = b.manufacturer_id
          JOIN partners h ON h.id = b.current_holder_id
+         LEFT JOIN partners r ON r.id = b.pending_recipient_id
          ORDER BY b.created_at DESC`
       );
-      return rows;
+      return rows.map(({ first_point, last_point, ...b }: any) => ({
+        ...b,
+        origin_city: first_point ? nearestCity(first_point) : null,
+        current_city: last_point ? nearestCity(last_point) : null,
+        destination_city: b.state === 'IN_TRANSIT' ? CITIES[last_point?.destination]?.name ?? null : null,
+      }));
     });
     res.json({ ok: true, batches });
   } catch (err) {

@@ -6,6 +6,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import Login, { Session, Persona, loadSession, clearSession } from './components/Login';
 import LiveTracking from './components/LiveTracking';
+import { NewBatchButton, StepButton } from './components/BatchActions';
 import {
   LayoutDashboard,
   Truck,
@@ -80,6 +81,11 @@ interface Batch {
   current_holder_role?: string;
   event_count?: number;
   alert_count?: number;
+  manufacturer_name?: string;
+  pending_recipient_role?: string | null;
+  origin_city?: string | null;
+  current_city?: string | null;
+  destination_city?: string | null;
 }
 
 interface EventItem {
@@ -118,8 +124,8 @@ type TabId = 'dashboard' | 'shipping' | 'reports' | 'order' | 'delivery' | 'trac
 // Which menu tabs each signed-in persona can see (first one is the landing tab)
 const PERSONA_TABS: Record<Persona, TabId[]> = {
   manufacturer: ['dashboard', 'order', 'inventory', 'shipping', 'delivery', 'reports', 'settings'],
-  logistics: ['shipping', 'dashboard', 'reports'],
-  consumer: ['delivery', 'tracking'],
+  logistics: ['shipping', 'dashboard', 'reports', 'settings'],
+  consumer: ['delivery', 'tracking', 'settings'],
 };
 
 const PERSONA_COMPANY: Record<Persona, string> = {
@@ -130,7 +136,16 @@ const PERSONA_COMPANY: Record<Persona, string> = {
 
 export default function App() {
   const [session, setSession] = useState<Session | null>(loadSession);
-  if (!session) return <Login onLogin={setSession} />;
+  if (!session)
+    return (
+      <Login
+        onLogin={async (s) => {
+          // Every sign-in starts plain: clear the ledger, demo data is loaded from Settings
+          await fetch('/api/demo/reset', { method: 'POST' }).catch(() => {});
+          setSession(s);
+        }}
+      />
+    );
   return (
     <Dashboard
       key={session.email}
@@ -145,6 +160,7 @@ export default function App() {
 
 function Dashboard({ session, onLogout }: { session: Session; onLogout: () => void }) {
   const allowedTabs = PERSONA_TABS[session.persona];
+  const canEdit = session.persona !== 'consumer';
   const displayName = session.email.split('@')[0].replace(/^./, (c) => c.toUpperCase());
 
   // Navigation tabs matching the screenshot menu
@@ -169,6 +185,8 @@ function Dashboard({ session, onLogout }: { session: Session; onLogout: () => vo
   const [partners, setPartners] = useState<Partner[]>([]);
   const [activePartner, setActivePartner] = useState<Partner | null>(null);
   const [batches, setBatches] = useState<Batch[]>([]);
+  // Demo mode = the seeded demo lots are present (loaded from Settings)
+  const demoLoaded = batches.some((b) => b.batch_code === 'LOT-GENUINE-2026');
   const [selectedBatchId, setSelectedBatchId] = useState<string | null>(null);
   const [selectedBatchDetails, setSelectedBatchDetails] = useState<{ batch: Batch; events: EventItem[]; alerts: any[] } | null>(null);
   const [units, setUnits] = useState<any[]>([]);
@@ -279,40 +297,6 @@ function Dashboard({ session, onLogout }: { session: Session; onLogout: () => vo
         .catch(console.error);
     }
   }, [selectedBatchId]);
-
-  // Run 1-Click Golden Path Demo
-  async function runGoldenPath() {
-    setLoading(true);
-    setStatusMessage('Executing Golden Path: Registering partners, creating LOT42, signing Ed25519 events...');
-    try {
-      const res = await fetch('/api/demo/golden-path', { method: 'POST' }).then((r) => r.json());
-      setDemoOutput(res);
-      setStatusMessage('Golden Path executed! Check live shipment history and anomaly feed.');
-      await fetchInitialData();
-      if (res.batch?.id) setSelectedBatchId(res.batch.id);
-      if (res.sampleUnit?.token) setVerifyTokenInput(res.sampleUnit.token);
-    } catch (err: any) {
-      setStatusMessage('Golden Path error: ' + err.message);
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  // Run Counterfeit Injection Test
-  async function runCounterfeitInjection() {
-    setLoading(true);
-    setStatusMessage('Simulating photocopy clone: Scanning in Delhi, then Chennai moments later (Impossible Travel R4)...');
-    try {
-      const res = await fetch('/api/demo/counterfeit-injection', { method: 'POST' }).then((r) => r.json());
-      setDemoOutput(res);
-      setStatusMessage('Counterfeit detected! R4_IMPOSSIBLE_TRAVEL triggered (1,760 km Delhi to Chennai in moments).');
-      await fetchInitialData();
-    } catch (err: any) {
-      setStatusMessage('Counterfeit test error: ' + err.message);
-    } finally {
-      setLoading(false);
-    }
-  }
 
   // Run Cryptographic Tamper Test
   async function runTamperTest() {
@@ -1049,6 +1033,8 @@ function Dashboard({ session, onLogout }: { session: Session; onLogout: () => vo
               <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
                 {/* LEFT / CENTER: Analytics & Dotted Column Chart (approx 68% width) */}
                 <div className="lg:col-span-8 space-y-6">
+                  {demoLoaded ? (
+                  <>
                   {/* Analytics Card */}
                   <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-xs space-y-5">
                     {/* Top Row: Title, Category Pills, and Time range dropdown */}
@@ -1230,6 +1216,36 @@ function Dashboard({ session, onLogout }: { session: Session; onLogout: () => vo
                       </div>
                     </div>
                   </div>
+                  </>
+                  ) : (
+                    <div className="bg-white border border-slate-200 rounded-2xl p-10 shadow-xs text-center space-y-3">
+                      <Package className="w-8 h-8 text-slate-300 mx-auto" />
+                      <h3 className="font-bold text-base text-slate-900">{batches.length ? 'Analytics' : 'No shipments yet'}</h3>
+                      <p className="text-xs text-slate-500 max-w-sm mx-auto">
+                        {batches.length
+                          ? `Tracking ${batches.length} batch${batches.length > 1 ? 'es' : ''} of your own. Trend charts appear once there is more history; load demo data from Settings to see a full example.`
+                          : canEdit
+                          ? 'Create your first batch from Shipping History, or load demo data from Settings to see a full example.'
+                          : 'Your shipments will show up here as batches move. Load demo data from Settings to see a full example.'}
+                      </p>
+                      <div className="flex justify-center gap-2">
+                        {canEdit && (
+                          <button
+                            onClick={() => setActiveTab('shipping')}
+                            className="px-3.5 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-xl transition cursor-pointer"
+                          >
+                            Go to Shipping History
+                          </button>
+                        )}
+                        <button
+                          onClick={() => setActiveTab('settings')}
+                          className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-xs rounded-xl transition cursor-pointer"
+                        >
+                          Open Settings
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {/* RIGHT COLUMN: Shipment History (Matching Screenshot!) */}
@@ -1238,7 +1254,7 @@ function Dashboard({ session, onLogout }: { session: Session; onLogout: () => vo
                     {/* Header */}
                     <div>
                       <h3 className="font-bold text-base text-slate-900">Shipment History</h3>
-                      <p className="text-xs text-slate-400">59 Active Shipments &bull; Provenance Ledger</p>
+                      <p className="text-xs text-slate-400">{batches.filter((b) => b.state !== 'SOLD' && !b.is_recalled).length} Active Shipments &bull; Provenance Ledger</p>
                     </div>
 
                     {/* Filter Tabs: [ Notable | Delivered | Shipping ] */}
@@ -1274,19 +1290,14 @@ function Dashboard({ session, onLogout }: { session: Session; onLogout: () => vo
                           .map((b) => {
                             const isRecalled = b.is_recalled;
                             const isSold = b.state === 'SOLD';
-                            const isSuspect = b.batch_code.includes('SUSPECT');
+                            const isSuspect = !isRecalled && Number(b.alert_count) > 0;
 
-                            const originCity = b.batch_code.includes('GENUINE')
-                              ? 'Bharat BioVax Ltd, Hyderabad (IN)'
-                              : b.batch_code.includes('SUSPECT')
-                              ? 'ApexBio Pharma Plant, Nagpur (IN)'
-                              : 'ApexBio Synthesis Lab, Mumbai (IN)';
-
-                            const destCity = b.batch_code.includes('GENUINE')
-                              ? 'Chennai Central Pharmacy, Chennai (IN)'
-                              : b.batch_code.includes('SUSPECT')
-                              ? 'Apollo Health Retail Dispensary, Pune (IN)'
-                              : 'Quarantine Vault (DEG Hazard Notice)';
+                            const originCity = `${b.manufacturer_name}, ${b.origin_city || '—'}`;
+                            const destCity = isRecalled
+                              ? `Quarantined at ${b.current_city || '—'}`
+                              : b.state === 'IN_TRANSIT'
+                              ? `In transit to ${b.destination_city || '—'}`
+                              : `${b.current_holder_name}, ${b.current_city || '—'}`;
 
                             return (
                               <div
@@ -1357,14 +1368,14 @@ function Dashboard({ session, onLogout }: { session: Session; onLogout: () => vo
                                 {isSuspect && (
                                   <div className="text-[10px] font-semibold text-amber-700 bg-amber-50/70 px-2 py-0.5 rounded border border-amber-200/60 flex items-center space-x-1">
                                     <AlertTriangle className="w-3 h-3 text-amber-600 shrink-0" />
-                                    <span>Rule R7: 12 Cartons Missing in Transit</span>
+                                    <span>{b.alert_count} anomaly alert(s) on this batch</span>
                                   </div>
                                 )}
                               </div>
                             );
                           })
                       ) : (
-                        <div className="p-4 text-center text-xs text-slate-400">No shipments found.</div>
+                        <div className="p-4 text-center text-xs text-slate-400">No shipments yet.</div>
                       )}
 
                       {/* Active Anomaly Alert Card if any alerts exist */}
@@ -1406,18 +1417,11 @@ function Dashboard({ session, onLogout }: { session: Session; onLogout: () => vo
                     Append-only event chain with Ed25519 signatures, state transitions, and custody handoffs.
                   </p>
                 </div>
-                {batches.length === 0 && (
-                  <button
-                    onClick={runGoldenPath}
-                    className="px-3.5 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-xl transition shadow-sm"
-                  >
-                    Run Golden Path (Seed Data)
-                  </button>
-                )}
+                {canEdit && <NewBatchButton onDone={fetchInitialData} />}
               </div>
 
               {/* Batches Table */}
-              <div className="rounded-xl border border-slate-200 overflow-hidden">
+              <div className="rounded-xl border border-slate-200 overflow-x-auto">
                 <table className="w-full text-xs text-left">
                   <thead className="bg-slate-50 text-slate-600 font-semibold border-b border-slate-200">
                     <tr>
@@ -1425,7 +1429,9 @@ function Dashboard({ session, onLogout }: { session: Session; onLogout: () => vo
                       <th className="p-3">Product Name</th>
                       <th className="p-3">Quantity</th>
                       <th className="p-3">Current Holder</th>
+                      <th className="p-3">Location</th>
                       <th className="p-3">Status</th>
+                      {canEdit && <th className="p-3">Next step</th>}
                       <th className="p-3 text-right">Actions</th>
                     </tr>
                   </thead>
@@ -1444,6 +1450,11 @@ function Dashboard({ session, onLogout }: { session: Session; onLogout: () => vo
                         <td className="p-3 text-slate-700">
                           <strong>{b.current_holder_name}</strong> ({b.current_holder_role})
                         </td>
+                        <td className="p-3 text-slate-600">
+                          {b.state === 'IN_TRANSIT' && b.destination_city
+                            ? `${b.current_city} → ${b.destination_city}`
+                            : b.current_city || '—'}
+                        </td>
                         <td className="p-3">
                           <span
                             className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
@@ -1457,6 +1468,11 @@ function Dashboard({ session, onLogout }: { session: Session; onLogout: () => vo
                             {b.is_recalled ? 'RECALLED' : b.state}
                           </span>
                         </td>
+                        {canEdit && (
+                          <td className="p-3">
+                            <StepButton key={`${b.id}-${b.state}`} batch={b} onDone={fetchInitialData} />
+                          </td>
+                        )}
                         <td className="p-3 text-right">
                           <button
                             onClick={(e) => {
@@ -1471,6 +1487,16 @@ function Dashboard({ session, onLogout }: { session: Session; onLogout: () => vo
                         </td>
                       </tr>
                     ))}
+                    {batches.length === 0 && (
+                      <tr>
+                        <td colSpan={canEdit ? 8 : 7} className="p-8 text-center text-slate-400">
+                          No batches yet.{' '}
+                          {canEdit
+                            ? 'Create one with “New batch”, or load demo data from Settings.'
+                            : 'Load demo data from Settings to see example batches.'}
+                        </td>
+                      </tr>
+                    )}
                   </tbody>
                 </table>
               </div>
@@ -1668,6 +1694,7 @@ function Dashboard({ session, onLogout }: { session: Session; onLogout: () => vo
                     </p>
 
                     <div className="space-y-1.5">
+                      {demoLoaded && (<>
                       <div className="flex items-center justify-between">
                         <label className="text-xs font-semibold text-slate-700">Quick Select Batch Unit</label>
                         <span className="text-[10px] text-slate-400">1-Click Telemetry Feed</span>
@@ -1698,6 +1725,7 @@ function Dashboard({ session, onLogout }: { session: Session; onLogout: () => vo
                           <span className="block text-[9px] text-red-600 font-normal">Toxicity Recall</span>
                         </button>
                       </div>
+                      </>)}
                     </div>
 
                     <div className="space-y-1.5">
@@ -2259,6 +2287,7 @@ function Dashboard({ session, onLogout }: { session: Session; onLogout: () => vo
           {/* TAB: SETTINGS & LEDGER AUDIT */}
           {activeTab === 'settings' && (
             <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-xs space-y-6">
+              {personaMode === 'manufacturer' && (<>
               <div className="flex items-center justify-between border-b border-slate-100 pb-4">
                 <div>
                   <h3 className="font-bold text-base text-slate-900">Cryptographic Hash Chain Audit</h3>
@@ -2299,13 +2328,16 @@ function Dashboard({ session, onLogout }: { session: Session; onLogout: () => vo
                   <p className="text-rose-900">{chainStatus.reason}</p>
                 </div>
               )}
+              </>)}
               {/* Settings: Ledger Demo Data & Heuristics Controls */}
               <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-xs space-y-5">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 pb-4">
                   <div>
-                    <h4 className="font-bold text-sm text-slate-900">Ledger Demo Data &amp; Engine Controls</h4>
+                    <h4 className="font-bold text-sm text-slate-900">Demo Data</h4>
                     <p className="text-xs text-slate-500">
-                      Populate or reset real cryptographic batches. All data feeds directly into Dashboard KPI cards, Shipment History, and Verification.
+                      {demoLoaded
+                        ? 'Demo data is loaded across the dashboard, shipments, verification and tracking.'
+                        : 'Load sample Indian supply-chain batches (genuine, cloned, recalled and in-transit) to explore every screen. This replaces any data you entered.'}
                     </p>
                   </div>
                   <div className="flex items-center space-x-2 shrink-0">
@@ -2327,13 +2359,13 @@ function Dashboard({ session, onLogout }: { session: Session; onLogout: () => vo
                       className="px-3.5 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-xl transition shadow-sm flex items-center space-x-1.5 cursor-pointer"
                     >
                       <Zap className="w-3.5 h-3.5" />
-                      <span>{loading ? 'Populating...' : '⚡ Populate Demo Data'}</span>
+                      <span>{loading ? 'Loading…' : demoLoaded ? 'Reload demo data' : 'Load demo data'}</span>
                     </button>
 
                     <button
                       disabled={loading}
                       onClick={async () => {
-                        if (!window.confirm('Reset ledger to clean state?')) return;
+                        if (!window.confirm('Clear all data and start empty?')) return;
                         setLoading(true);
                         try {
                           await fetch('/api/demo/reset', { method: 'POST' });
@@ -2345,15 +2377,16 @@ function Dashboard({ session, onLogout }: { session: Session; onLogout: () => vo
                           setLoading(false);
                         }
                       }}
-                      className="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-xs rounded-xl transition cursor-pointer"
-                      title="Reset Ledger"
+                      className="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-xs rounded-xl transition cursor-pointer flex items-center gap-1.5"
                     >
                       <RotateCcw className="w-3.5 h-3.5" />
+                      <span>Clear data</span>
                     </button>
                   </div>
                 </div>
 
                 {/* Heuristic Parameter Controls */}
+                {personaMode === 'manufacturer' && (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-2">
                     <div className="flex items-center justify-between text-xs font-semibold text-slate-800">
@@ -2375,6 +2408,7 @@ function Dashboard({ session, onLogout }: { session: Session; onLogout: () => vo
                     </p>
                   </div>
                 </div>
+                )}
               </div>
             </div>
           )}
