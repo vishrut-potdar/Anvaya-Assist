@@ -4,6 +4,8 @@
  */
 
 import React, { useState, useEffect, useMemo } from 'react';
+import Login, { Session, Persona, loadSession, clearSession } from './components/Login';
+import LiveTracking from './components/LiveTracking';
 import {
   LayoutDashboard,
   Truck,
@@ -48,6 +50,8 @@ import {
   Boxes,
   Award,
   Sliders,
+  LogOut,
+  Navigation,
 } from 'lucide-react';
 import ScanGeoHistoryChart, { ScanHistoryEntry } from './components/ScanGeoHistoryChart.tsx';
 
@@ -109,11 +113,46 @@ interface AlertItem {
   created_at: string;
 }
 
+type TabId = 'dashboard' | 'shipping' | 'reports' | 'order' | 'delivery' | 'tracking' | 'inventory' | 'settings' | 'guide';
+
+// Which menu tabs each signed-in persona can see (first one is the landing tab)
+const PERSONA_TABS: Record<Persona, TabId[]> = {
+  manufacturer: ['dashboard', 'order', 'inventory', 'shipping', 'delivery', 'reports', 'settings'],
+  logistics: ['shipping', 'dashboard', 'reports'],
+  consumer: ['delivery', 'tracking'],
+};
+
+const PERSONA_COMPANY: Record<Persona, string> = {
+  manufacturer: 'ApexBio Pharma, Nagpur',
+  logistics: 'TransBharat Logistics',
+  consumer: 'Consumer Account',
+};
+
 export default function App() {
+  const [session, setSession] = useState<Session | null>(loadSession);
+  if (!session) return <Login onLogin={setSession} />;
+  return (
+    <Dashboard
+      key={session.email}
+      session={session}
+      onLogout={() => {
+        clearSession();
+        setSession(null);
+      }}
+    />
+  );
+}
+
+function Dashboard({ session, onLogout }: { session: Session; onLogout: () => void }) {
+  const allowedTabs = PERSONA_TABS[session.persona];
+  const displayName = session.email.split('@')[0].replace(/^./, (c) => c.toUpperCase());
+
   // Navigation tabs matching the screenshot menu
-  const [activeTab, setActiveTab] = useState<
-    'dashboard' | 'shipping' | 'reports' | 'order' | 'delivery' | 'inventory' | 'settings' | 'guide'
-  >('dashboard');
+  const [activeTab, setActiveTabRaw] = useState<TabId>(allowedTabs[0]);
+  // Ignore jumps to tabs this persona can't see (some demo buttons link across portals)
+  const setActiveTab = (tab: TabId) => {
+    if (allowedTabs.includes(tab)) setActiveTabRaw(tab);
+  };
 
   const [analyticsCategory, setAnalyticsCategory] = useState<'ship' | 'truck' | 'plane' | 'delivery'>('ship');
   const [analyticsTimeRange, setAnalyticsTimeRange] = useState<'This year' | 'Last 6 months' | 'Last 30 days'>('This year');
@@ -138,12 +177,12 @@ export default function App() {
 
   // Buyer verification state
   const [verifyTokenInput, setVerifyTokenInput] = useState('');
-  const [verifyCity, setVerifyCity] = useState('Berlin');
+  const [verifyCity, setVerifyCity] = useState('Delhi');
   const [verifyResult, setVerifyResult] = useState<any>(null);
   const [verifyLoading, setVerifyLoading] = useState(false);
 
   // 3 Persona Modes in One UI: Manufacturer/Retail, Logistics, Consumer
-  const [personaMode, setPersonaMode] = useState<'manufacturer' | 'logistics' | 'consumer'>('manufacturer');
+  const personaMode = session.persona;
 
   // Anti-Scam Return States
   const [returnTokenInput, setReturnTokenInput] = useState('');
@@ -262,11 +301,11 @@ export default function App() {
   // Run Counterfeit Injection Test
   async function runCounterfeitInjection() {
     setLoading(true);
-    setStatusMessage('Simulating photocopy clone: Scanning in Berlin, then Lagos 20 min later (Impossible Travel R4)...');
+    setStatusMessage('Simulating photocopy clone: Scanning in Delhi, then Chennai moments later (Impossible Travel R4)...');
     try {
       const res = await fetch('/api/demo/counterfeit-injection', { method: 'POST' }).then((r) => r.json());
       setDemoOutput(res);
-      setStatusMessage('Counterfeit detected! R4_IMPOSSIBLE_TRAVEL triggered (4,700 km in 20 min).');
+      setStatusMessage('Counterfeit detected! R4_IMPOSSIBLE_TRAVEL triggered (1,760 km Delhi to Chennai in moments).');
       await fetchInitialData();
     } catch (err: any) {
       setStatusMessage('Counterfeit test error: ' + err.message);
@@ -313,14 +352,15 @@ export default function App() {
     setVerifyLoading(true);
     const city = cityOverride || verifyCity;
     const coords: Record<string, { lat: number; lng: number }> = {
-      Berlin: { lat: 52.52, lng: 13.405 },
-      Lagos: { lat: 6.5244, lng: 3.3792 },
+      Delhi: { lat: 28.6139, lng: 77.209 },
+      Chennai: { lat: 13.0827, lng: 80.2707 },
       Mumbai: { lat: 19.076, lng: 72.8777 },
       Pune: { lat: 18.5204, lng: 73.8567 },
-      'New York': { lat: 40.7128, lng: -74.006 },
+      Kolkata: { lat: 22.5726, lng: 88.3639 },
+      Bengaluru: { lat: 12.9716, lng: 77.5946 },
     };
 
-    const loc = coords[city] || { lat: 52.52, lng: 13.405 };
+    const loc = coords[city] || coords.Delhi;
 
     try {
       const res = await fetch(
@@ -487,11 +527,11 @@ export default function App() {
       tonnageValue: '2,345,500',
       fleetCount: 'Total: 1,247 vehicles',
       tonnagePercent: '74%',
-      countryFlag: '🇺🇸',
-      countryName: 'United States',
+      countryFlag: '🇮🇳',
+      countryName: 'Maharashtra',
       countryVisits: '9,763',
       countryChange: '+7.4%',
-      countrySubtitle: '20 countries share 97% visits',
+      countrySubtitle: '28 states share 97% visits',
       yLabels: ['70K', '60K', '50K', '40K', '30K', '20K', '10K', '0K'],
       columns: {
         'This year': [
@@ -538,11 +578,11 @@ export default function App() {
       tonnageValue: '840,200',
       fleetCount: 'Total: 684 reefer trucks',
       tonnagePercent: '88%',
-      countryFlag: '🇩🇪',
-      countryName: 'Germany',
+      countryFlag: '🇮🇳',
+      countryName: 'Delhi NCR',
       countryVisits: '14,290',
       countryChange: '+12.3%',
-      countrySubtitle: '14 transit hubs across EU corridor',
+      countrySubtitle: '14 transit hubs across the NH44 corridor',
       yLabels: ['50K', '40K', '30K', '25K', '20K', '15K', '10K', '0K'],
       columns: {
         'This year': [
@@ -589,11 +629,11 @@ export default function App() {
       tonnageValue: '142,800',
       fleetCount: 'Total: 38 cargo flights',
       tonnagePercent: '62%',
-      countryFlag: '🇬🇧',
-      countryName: 'United Kingdom',
+      countryFlag: '🇮🇳',
+      countryName: 'Karnataka',
       countryVisits: '6,812',
       countryChange: '+18.9%',
-      countrySubtitle: '12 international air cargo terminals',
+      countrySubtitle: '12 domestic air cargo terminals',
       yLabels: ['30K', '25K', '20K', '15K', '10K', '7K', '4K', '0K'],
       columns: {
         'This year': [
@@ -640,8 +680,8 @@ export default function App() {
       tonnageValue: '41,200',
       fleetCount: 'Total: 182 Partner Dispensaries',
       tonnagePercent: '96%',
-      countryFlag: '🇫🇷',
-      countryName: 'France',
+      countryFlag: '🇮🇳',
+      countryName: 'Tamil Nadu',
       countryVisits: '11,450',
       countryChange: '+9.1%',
       countrySubtitle: '182 verified clinical & retail dispensaries',
@@ -690,12 +730,12 @@ export default function App() {
           {/* User Profile Header */}
           <div className="flex items-center space-x-3">
             <div className="w-10 h-10 rounded-full bg-gradient-to-tr from-blue-600 to-indigo-500 text-white font-bold flex items-center justify-center text-sm shadow-sm ring-2 ring-blue-100">
-              R
+              {displayName.charAt(0)}
             </div>
-            <div>
+            <div className="min-w-0">
               <p className="text-[11px] text-slate-400 font-medium leading-none">Welcome back,</p>
-              <h2 className="text-sm font-bold text-slate-900 leading-tight">Ronald!</h2>
-              <p className="text-[10px] text-slate-400">ProvChain Logistics</p>
+              <h2 className="text-sm font-bold text-slate-900 leading-tight truncate">{displayName}!</h2>
+              <p className="text-[10px] text-slate-400 truncate">{session.email}</p>
             </div>
           </div>
 
@@ -707,7 +747,7 @@ export default function App() {
               </div>
               <div>
                 <span className="text-[10px] text-slate-400 uppercase font-semibold block leading-none">Company</span>
-                <span className="text-xs font-bold text-slate-900">Load Swift NYC</span>
+                <span className="text-xs font-bold text-slate-900">{PERSONA_COMPANY[personaMode]}</span>
               </div>
             </div>
             <ChevronDown className="w-4 h-4 text-slate-400" />
@@ -725,15 +765,16 @@ export default function App() {
               { id: 'reports', label: `Report & Analysis ${alerts.filter(a => a.status === 'open').length ? `(${alerts.filter(a => a.status === 'open').length})` : ''}`, icon: FileText },
               { id: 'order', label: 'Order / GS1 QR', icon: Tag },
               { id: 'delivery', label: 'Delivery / Verify', icon: QrCode },
+              { id: 'tracking', label: 'Live Tracking', icon: Navigation },
               { id: 'inventory', label: 'Inventory / Recall', icon: Package },
               { id: 'settings', label: 'Settings / Ledger', icon: Settings },
-            ].map((item) => {
+            ].filter((item) => allowedTabs.includes(item.id as TabId)).map((item) => {
               const Icon = item.icon;
               const isActive = activeTab === item.id;
               return (
                 <button
                   key={item.id}
-                  onClick={() => setActiveTab(item.id as any)}
+                  onClick={() => setActiveTab(item.id as TabId)}
                   className={`w-full flex items-center space-x-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition cursor-pointer ${
                     isActive
                       ? 'bg-blue-600 text-white shadow-md shadow-blue-500/25'
@@ -748,6 +789,7 @@ export default function App() {
           </div>
 
           {/* Help & Support Menu */}
+          {allowedTabs.includes('reports') && (
           <div className="space-y-1 pt-3 border-t border-slate-100">
             <span className="text-[10px] uppercase font-bold tracking-wider text-slate-400 px-3 block mb-1">
               Help &amp; Support
@@ -781,6 +823,7 @@ export default function App() {
               <span>Contact Support</span>
             </button>
           </div>
+          )}
         </div>
 
         {/* System Pill Footer */}
@@ -789,7 +832,13 @@ export default function App() {
             <span className={`w-2 h-2 rounded-full ${sseConnected ? 'bg-emerald-500 animate-pulse' : 'bg-amber-400'}`} />
             <span>{sseConnected ? 'Live Network' : 'Connecting'}</span>
           </div>
-          <span className="font-mono text-[10px] text-slate-400">v1.2.0</span>
+          <button
+            onClick={onLogout}
+            className="flex items-center space-x-1 text-[11px] font-semibold text-slate-500 hover:text-rose-600 transition cursor-pointer"
+          >
+            <LogOut className="w-3.5 h-3.5" />
+            <span>Log out</span>
+          </button>
         </div>
       </aside>
 
@@ -811,54 +860,6 @@ export default function App() {
             </p>
           </div>
 
-          {/* Mode Switcher Segmented Control */}
-          <div className="flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200 text-xs font-semibold select-none">
-            <button
-              onClick={() => {
-                setPersonaMode('manufacturer');
-                setActiveTab('order');
-              }}
-              className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg transition cursor-pointer ${
-                personaMode === 'manufacturer'
-                  ? 'bg-blue-600 text-white shadow-sm'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <Factory className="w-3.5 h-3.5" />
-              <span>Manufacturer &amp; Retail</span>
-            </button>
-
-            <button
-              onClick={() => {
-                setPersonaMode('logistics');
-                setActiveTab('shipping');
-              }}
-              className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg transition cursor-pointer ${
-                personaMode === 'logistics'
-                  ? 'bg-indigo-600 text-white shadow-sm'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <Truck className="w-3.5 h-3.5" />
-              <span>Logistics</span>
-            </button>
-
-            <button
-              onClick={() => {
-                setPersonaMode('consumer');
-                setActiveTab('delivery');
-              }}
-              className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg transition cursor-pointer ${
-                personaMode === 'consumer'
-                  ? 'bg-emerald-600 text-white shadow-sm'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <ShieldCheck className="w-3.5 h-3.5" />
-              <span>Consumer &amp; Returns</span>
-            </button>
-          </div>
-
           <div className="flex items-center space-x-3">
             {/* Pill Search Input with blue circular button */}
             <div className="relative flex items-center">
@@ -875,6 +876,7 @@ export default function App() {
             </div>
 
             {/* Notification Bell with alert counter */}
+            {allowedTabs.includes('reports') && (
             <button
               onClick={() => setActiveTab('reports')}
               className="relative p-2 rounded-full hover:bg-slate-100 text-slate-600 transition"
@@ -885,6 +887,7 @@ export default function App() {
                 <span className="absolute top-1 right-1 w-2 h-2 bg-rose-500 rounded-full ring-2 ring-white" />
               )}
             </button>
+            )}
 
             {/* Refresh */}
             <button
@@ -1186,7 +1189,7 @@ export default function App() {
                       </div>
                     </div>
 
-                    {/* Bottom Sub-Widgets: Fleet Tonnage & Visits by Country (Dynamic per category) */}
+                    {/* Bottom Sub-Widgets: Fleet Tonnage & Visits by State (Dynamic per category) */}
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2 border-t border-slate-100">
                       {/* Sub-Card 1: Fleet Tonnage / Dispatch Volume */}
                       <div className="bg-slate-50/70 border border-slate-200/80 rounded-xl p-4 space-y-2">
@@ -1206,10 +1209,10 @@ export default function App() {
                         </div>
                       </div>
 
-                      {/* Sub-Card 2: Visits by Country */}
+                      {/* Sub-Card 2: Visits by State */}
                       <div className="bg-slate-50/70 border border-slate-200/80 rounded-xl p-4 space-y-2">
                         <div className="flex items-center justify-between text-xs">
-                          <span className="font-bold text-slate-800">Visits by Country</span>
+                          <span className="font-bold text-slate-800">Visits by State</span>
                           <span className="text-[11px] text-slate-400">{currentAnalytics.countrySubtitle}</span>
                         </div>
                         <div className="flex items-center justify-between text-xs pt-1">
@@ -1274,13 +1277,13 @@ export default function App() {
                             const isSuspect = b.batch_code.includes('SUSPECT');
 
                             const originCity = b.batch_code.includes('GENUINE')
-                              ? 'BioVax Global GmbH, Berlin (DE)'
+                              ? 'Bharat BioVax Ltd, Hyderabad (IN)'
                               : b.batch_code.includes('SUSPECT')
                               ? 'ApexBio Pharma Plant, Nagpur (IN)'
                               : 'ApexBio Synthesis Lab, Mumbai (IN)';
 
                             const destCity = b.batch_code.includes('GENUINE')
-                              ? 'St. Jude Central Dispensary, London (GB)'
+                              ? 'Chennai Central Pharmacy, Chennai (IN)'
                               : b.batch_code.includes('SUSPECT')
                               ? 'Apollo Health Retail Dispensary, Pune (IN)'
                               : 'Quarantine Vault (DEG Hazard Notice)';
@@ -1672,7 +1675,7 @@ export default function App() {
                       <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                         <button
                           type="button"
-                          onClick={() => handleDemoVerify('LOT-GENUINE-2026', 'London')}
+                          onClick={() => handleDemoVerify('LOT-GENUINE-2026', 'Chennai')}
                           className="px-2.5 py-1.5 rounded-lg border border-emerald-200 bg-emerald-50/70 hover:bg-emerald-100 text-emerald-900 text-[11px] font-semibold text-left transition"
                         >
                           🟢 LOT-GENUINE-2026
@@ -1688,7 +1691,7 @@ export default function App() {
                         </button>
                         <button
                           type="button"
-                          onClick={() => handleDemoVerify('LOT-RECALL-9012', 'Berlin')}
+                          onClick={() => handleDemoVerify('LOT-RECALL-9012', 'Delhi')}
                           className="px-2.5 py-1.5 rounded-lg border border-red-200 bg-red-50/70 hover:bg-red-100 text-red-900 text-[11px] font-semibold text-left transition"
                         >
                           ⚠️ LOT-RECALL-9012
@@ -1711,7 +1714,7 @@ export default function App() {
                     <div className="space-y-1.5">
                       <label className="text-xs font-semibold text-slate-700">Simulated Location</label>
                       <div className="grid grid-cols-3 gap-2">
-                        {['Berlin', 'Lagos', 'Mumbai', 'Pune', 'New York'].map((city) => (
+                        {['Delhi', 'Chennai', 'Mumbai', 'Pune', 'Kolkata', 'Bengaluru'].map((city) => (
                           <button
                             key={city}
                             onClick={() => setVerifyCity(city)}
@@ -2082,6 +2085,8 @@ export default function App() {
           )}
 
           {/* TAB: REPORT & ANALYSIS (Live Anomalies Feed) */}
+          {activeTab === 'tracking' && <LiveTracking />}
+
           {activeTab === 'reports' && (
             <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-xs space-y-6">
               <div className="flex items-center justify-between border-b border-slate-100 pb-4">

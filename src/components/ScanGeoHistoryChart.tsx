@@ -124,14 +124,14 @@ export default function ScanGeoHistoryChart({
     });
   }, [history]);
 
-  // World coordinate bounds for D3/SVG Trajectory Map
+  // India coordinate bounds for D3/SVG Trajectory Map
   const mapPoints = useMemo(() => {
     if (!history) return [];
     return history.map((item, idx) => {
-      // Longitude: -180 to 180 -> x: 20 to 580
-      const x = ((item.lng + 180) / 360) * 560 + 20;
-      // Latitude: 85 to -85 -> y: 20 to 240
-      const y = ((85 - Math.max(-85, Math.min(85, item.lat))) / 170) * 220 + 20;
+      // Longitude: 68 to 98 -> x: 20 to 580
+      const x = ((Math.max(68, Math.min(98, item.lng)) - 68) / 30) * 560 + 20;
+      // Latitude: 37 to 6 -> y: 20 to 240
+      const y = ((37 - Math.max(6, Math.min(37, item.lat))) / 31) * 220 + 20;
       return {
         ...item,
         x,
@@ -187,11 +187,11 @@ export default function ScanGeoHistoryChart({
           </span>
           <div className="flex flex-wrap items-center gap-1.5">
             {[
-              { city: 'Berlin', note: 'Original EU' },
-              { city: 'Lagos', note: 'Cloned Africa ⚡' },
-              { city: 'Mumbai', note: 'Domestic IN' },
+              { city: 'Delhi', note: 'Original North' },
+              { city: 'Chennai', note: 'Cloned South ⚡' },
+              { city: 'Mumbai', note: 'West Coast' },
               { city: 'Pune', note: 'Nearby 150km' },
-              { city: 'New York', note: 'US Transatlantic ⚡' },
+              { city: 'Guwahati', note: 'North-East ⚡' },
             ].map(({ city, note }) => (
               <button
                 key={city}
@@ -348,7 +348,7 @@ export default function ScanGeoHistoryChart({
         <div className="flex items-center justify-between text-xs text-slate-600">
           <span className="font-semibold text-slate-800 flex items-center space-x-1">
             <Compass className="w-4 h-4 text-blue-600" />
-            <span>Interactive World Geo-Telemetry Trajectory Map</span>
+            <span>Interactive India Geo-Telemetry Trajectory Map</span>
           </span>
           <span className="text-[11px] text-slate-500">
             Coordinates: Equirectangular projection with flight/road arcs

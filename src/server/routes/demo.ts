@@ -6,8 +6,16 @@ import { CITIES } from '../geo.ts';
 import { analyzeEvent } from '../worker.ts';
 import { config } from '../config.ts';
 import { RULES } from '../rules.ts';
+import { performVerification } from './public.ts';
 
 const router = Router();
+
+// Demo partners' private keys (public key -> private key), kept in memory so later demo runs can sign as them
+const demoPrivateKeys = new Map<string, string>();
+
+function scanAt(unitId: string, city: { name: string; lat: number; lng: number }, deviceId: string) {
+  return performVerification({ unitId, isTokenValid: true, lat: city.lat, lng: city.lng, city: city.name, deviceId });
+}
 
 export interface DemoSettings {
   maxTravelKmh: number;
@@ -32,7 +40,7 @@ router.post('/golden-path', async (_req, res, next) => {
     const partners = await withDb(async (db) => {
       const roles = [
         { name: 'ApexBio Pharma', role: 'manufacturer', country: 'IN' },
-        { name: 'TransGlobal Logistics', role: 'logistics', country: 'IN' },
+        { name: 'TransBharat Logistics', role: 'logistics', country: 'IN' },
         { name: 'MediDist Express', role: 'distributor', country: 'IN' },
         { name: 'Apollo Health Retail', role: 'retailer', country: 'IN' },
       ];
@@ -45,9 +53,22 @@ router.post('/golden-path', async (_req, res, next) => {
           [r.name]
         );
 
+        if (existing && demoPrivateKeys.has(existing.public_key)) {
+          loaded[r.role] = { ...existing, privateKey: demoPrivateKeys.get(existing.public_key) };
+          continue;
+        }
+
         if (existing) {
+          // ponytail: key unknown to this process (e.g. restarted against an external DB), so rotate it.
+          // Older events by this partner will then fail the chain audit; re-seed to recover.
           const keys = generateKeyPair();
-          loaded[r.role] = { ...existing, privateKey: keys.privateKey };
+          demoPrivateKeys.set(keys.publicKey, keys.privateKey);
+          await db.query('UPDATE partners SET public_key = $1 WHERE id = $2', [keys.publicKey, existing.id]);
+          await db.query(
+            `INSERT INTO partner_keys (partner_id, public_key, fingerprint) VALUES ($1, $2, $3)`,
+            [existing.id, keys.publicKey, keyFingerprint(keys.publicKey)]
+          );
+          loaded[r.role] = { ...existing, public_key: keys.publicKey, privateKey: keys.privateKey };
           continue;
         }
 
@@ -68,6 +89,7 @@ router.post('/golden-path', async (_req, res, next) => {
           [p.id, keys.publicKey, fp]
         );
 
+        demoPrivateKeys.set(keys.publicKey, keys.privateKey);
         loaded[r.role] = { ...p, apiKey, privateKey: keys.privateKey, publicKey: keys.publicKey };
       }
 
@@ -179,7 +201,7 @@ router.post('/golden-path', async (_req, res, next) => {
   }
 });
 
-// Counterfeit Photocopy Injection: Berlin scan -> Lagos scan 20 min later (Impossible Travel R4)
+// Counterfeit Photocopy Injection: Delhi scan -> Chennai scan moments later (Impossible Travel R4)
 router.post('/counterfeit-injection', async (_req, res, next) => {
   try {
     const sampleUnit = await withDb(async (db) => {
@@ -201,32 +223,29 @@ router.post('/counterfeit-injection', async (_req, res, next) => {
       });
     }
 
-    const token = unitToken(sampleUnit.id);
+    // Called in-process (not via HTTP to localhost) so it also works on serverless hosts like Vercel.
+    // First scan: Genuine buyer in Delhi
+    const delhiScan = await scanAt(sampleUnit.id, CITIES.DELHI, 'consumer-phone-delhi-01');
 
-    // First scan: Genuine buyer in Berlin
-    const berlinScan = await fetch(`http://localhost:${process.env.PORT || 3000}/api/verify/${token}?lat=${CITIES.BERLIN.lat}&lng=${CITIES.BERLIN.lng}&city=Berlin&device=consumer-phone-berlin-01`)
-      .then(r => r.json());
-
-    // Second scan: Cloned photocopy scanned in Lagos 20 mins later
-    // Distance Berlin -> Lagos = ~4,700 km
-    const lagosScan = await fetch(`http://localhost:${process.env.PORT || 3000}/api/verify/${token}?lat=${CITIES.LAGOS.lat}&lng=${CITIES.LAGOS.lng}&city=Lagos&device=counterfeit-phone-lagos-99`)
-      .then(r => r.json());
+    // Second scan: Cloned photocopy scanned in Chennai moments later
+    // Distance Delhi -> Chennai = ~1,760 km
+    const chennaiScan = await scanAt(sampleUnit.id, CITIES.CHENNAI, 'counterfeit-phone-chennai-99');
 
     res.json({
       ok: true,
       message: 'Counterfeit photocopy injection test completed.',
       unit: sampleUnit,
-      step1BerlinScan: {
-        location: 'Berlin, Germany',
-        verdict: berlinScan.verdict,
-        score: berlinScan.score,
-        reasons: berlinScan.reasons,
+      step1DelhiScan: {
+        location: 'Delhi, India',
+        verdict: delhiScan.verdict,
+        score: delhiScan.score,
+        reasons: delhiScan.reasons,
       },
-      step2LagosClonedScan: {
-        location: 'Lagos, Nigeria (4,700 km away in 20 minutes)',
-        verdict: lagosScan.verdict,
-        score: lagosScan.score,
-        reasons: lagosScan.reasons,
+      step2ChennaiClonedScan: {
+        location: 'Chennai, India (1,760 km away moments later)',
+        verdict: chennaiScan.verdict,
+        score: chennaiScan.score,
+        reasons: chennaiScan.reasons,
         anomalyTriggered: 'R4_IMPOSSIBLE_TRAVEL (cloned photocopy detected)',
       },
     });
@@ -353,14 +372,14 @@ export async function seedFullDataset() {
   // 2. Provision Global Supply Chain Partners with Ed25519 Keys
   const partners = await withDb(async (db) => {
       const partnerDefs = [
-        { name: 'BioVax Global GmbH', role: 'manufacturer', country: 'DE' },
-        { name: 'ColdLogix Worldwide Express', role: 'logistics', country: 'GB' },
-        { name: 'EuroMed Distribution NV', role: 'distributor', country: 'FR' },
-        { name: 'St. Jude Central Apothecary', role: 'retailer', country: 'US' },
+        { name: 'Bharat BioVax Ltd', role: 'manufacturer', country: 'IN' },
+        { name: 'ColdLogix India Express', role: 'logistics', country: 'IN' },
+        { name: 'Southern MedLink Distributors', role: 'distributor', country: 'IN' },
+        { name: 'Chennai Central Pharmacy', role: 'retailer', country: 'IN' },
         { name: 'ApexBio Pharma', role: 'manufacturer', country: 'IN' },
         { name: 'MediDist Express', role: 'distributor', country: 'IN' },
         { name: 'Apollo Health Retail', role: 'retailer', country: 'IN' },
-        { name: 'EMA & Health Safety Authority', role: 'regulator', country: 'DE' },
+        { name: 'CDSCO Drug Safety Authority', role: 'regulator', country: 'IN' },
       ];
 
       const loaded: Record<string, any> = {};
@@ -383,25 +402,26 @@ export async function seedFullDataset() {
           [p.id, keys.publicKey, fp]
         );
 
+        demoPrivateKeys.set(keys.publicKey, keys.privateKey);
         loaded[pDef.name] = { ...p, apiKey, privateKey: keys.privateKey, publicKey: keys.publicKey };
       }
 
       return loaded;
     });
 
-    const bioVax = partners['BioVax Global GmbH'];
-    const coldLogix = partners['ColdLogix Worldwide Express'];
-    const euroMed = partners['EuroMed Distribution NV'];
-    const stJude = partners['St. Jude Central Apothecary'];
+    const bioVax = partners['Bharat BioVax Ltd'];
+    const coldLogix = partners['ColdLogix India Express'];
+    const euroMed = partners['Southern MedLink Distributors'];
+    const stJude = partners['Chennai Central Pharmacy'];
 
     const apexBio = partners['ApexBio Pharma'];
     const mediDist = partners['MediDist Express'];
     const apolloHealth = partners['Apollo Health Retail'];
-    const regulator = partners['EMA & Health Safety Authority'];
+    const regulator = partners['CDSCO Drug Safety Authority'];
 
     let globalClock = Date.now() - 48 * 36e5; // 48 hours ago
 
-    async function recordSignedEvent(batchId: string, actor: any, type: string, opts: { to?: any; qty?: number; at?: any; hours?: number; note?: string } = {}) {
+    async function recordSignedEvent(batchId: string, actor: any, type: string, opts: { to?: any; qty?: number; at?: any; hours?: number; note?: string; destination?: string } = {}) {
       globalClock += (opts.hours || 2) * 36e5;
       const eventPayload = {
         batchId,
@@ -411,7 +431,7 @@ export async function seedFullDataset() {
         lat: opts.at?.lat ?? null,
         lng: opts.at?.lng ?? null,
         occurredAt: new Date(globalClock).toISOString(),
-        payload: { simulatedNote: opts.note || `${type} by ${actor.name}` },
+        payload: { simulatedNote: opts.note || `${type} by ${actor.name}`, ...(opts.destination ? { destination: opts.destination } : {}) },
       };
 
       const signature = sign(actor.privateKey, canonicalize(eventPayload));
@@ -442,14 +462,14 @@ export async function seedFullDataset() {
       return b;
     });
 
-    await recordSignedEvent(batchA.id, bioVax, 'MANUFACTURED', { at: CITIES.BERLIN, hours: 1, note: 'Synthesized in sterile ISO Class 5 cleanroom' });
-    await recordSignedEvent(batchA.id, bioVax, 'INSPECTED', { at: CITIES.BERLIN, hours: 2, note: 'Cryogenic HPLC vial integrity test passed' });
-    await recordSignedEvent(batchA.id, bioVax, 'PACKAGED', { at: CITIES.BERLIN, hours: 1, note: 'Sealed in temperature-monitored dry ice carton' });
-    await recordSignedEvent(batchA.id, bioVax, 'DISPATCHED', { to: euroMed, at: CITIES.BERLIN, hours: 2, note: 'Air cold-chain transfer to Paris hub' });
-    await recordSignedEvent(batchA.id, euroMed, 'RECEIVED', { qty: 100, at: CITIES.PARIS, hours: 4, note: 'EuroMed Paris vault receipt: 100/100 verified' });
-    await recordSignedEvent(batchA.id, euroMed, 'DISPATCHED', { to: stJude, at: CITIES.PARIS, hours: 3, note: 'Cross-channel courier to London facility' });
-    await recordSignedEvent(batchA.id, stJude, 'RECEIVED', { qty: 100, at: CITIES.LONDON, hours: 5, note: 'St Jude London dispensary received in spec' });
-    await recordSignedEvent(batchA.id, stJude, 'SOLD', { qty: 100, at: CITIES.LONDON, hours: 4, note: 'Dispensed to verified prescription holders' });
+    await recordSignedEvent(batchA.id, bioVax, 'MANUFACTURED', { at: CITIES.HYDERABAD, hours: 1, note: 'Synthesized in sterile ISO Class 5 cleanroom' });
+    await recordSignedEvent(batchA.id, bioVax, 'INSPECTED', { at: CITIES.HYDERABAD, hours: 2, note: 'Cryogenic HPLC vial integrity test passed' });
+    await recordSignedEvent(batchA.id, bioVax, 'PACKAGED', { at: CITIES.HYDERABAD, hours: 1, note: 'Sealed in temperature-monitored dry ice carton' });
+    await recordSignedEvent(batchA.id, bioVax, 'DISPATCHED', { to: euroMed, at: CITIES.HYDERABAD, hours: 2, note: 'Reefer cold-chain transfer to Bengaluru hub' });
+    await recordSignedEvent(batchA.id, euroMed, 'RECEIVED', { qty: 100, at: CITIES.BENGALURU, hours: 10, note: 'Bengaluru vault receipt: 100/100 verified' });
+    await recordSignedEvent(batchA.id, euroMed, 'DISPATCHED', { to: stJude, at: CITIES.BENGALURU, hours: 3, note: 'Road courier to Chennai pharmacy' });
+    await recordSignedEvent(batchA.id, stJude, 'RECEIVED', { qty: 100, at: CITIES.CHENNAI, hours: 7, note: 'Chennai pharmacy received in spec' });
+    await recordSignedEvent(batchA.id, stJude, 'SOLD', { qty: 100, at: CITIES.CHENNAI, hours: 4, note: 'Dispensed to verified prescription holders' });
 
     // -------------------------------------------------------------
     // SCENARIO 2: BATCH B (Grey Market Shortage + Impossible Travel Clone)
@@ -529,6 +549,42 @@ export async function seedFullDataset() {
       await db.query(`UPDATE units SET state = 'RECALLED' WHERE batch_id = $1`, [batchC.id]);
     });
 
+    // -------------------------------------------------------------
+    // SCENARIO 4: BATCH D (Live shipment on the road, Nagpur -> Delhi)
+    // -------------------------------------------------------------
+    const batchD = await withDb(async (db) => {
+      const { rows: [b] } = await db.query(
+        `INSERT INTO batches (batch_code, gtin, product_name, quantity, manufacturer_id, current_holder_id, expiry_date)
+         VALUES ($1, $2, $3, $4, $5, $5, $6)
+         RETURNING *`,
+        ['LOT-LIVE-5520', '08901234500017', 'Paracetamol 650mg Tablets (Strip of 15)', 60, apexBio.id, new Date(Date.now() + 600 * 86400 * 1000)]
+      );
+
+      await db.query(
+        `INSERT INTO units (batch_id, serial, state, current_custodian_id)
+         SELECT $1::uuid, s, 'CREATED', $2::uuid
+         FROM generate_series(1, 60) AS s`,
+        [b.id, apexBio.id]
+      );
+
+      await db.query(`INSERT INTO batch_participants (batch_id, partner_id) VALUES ($1, $2)`, [b.id, apexBio.id]);
+      return b;
+    });
+
+    // Real timestamps so the truck is part-way along the route right now
+    globalClock = Date.now() - 6 * 36e5;
+    await recordSignedEvent(batchD.id, apexBio, 'MANUFACTURED', { qty: 60, at: CITIES.NAGPUR, hours: 1 });
+    await recordSignedEvent(batchD.id, apexBio, 'INSPECTED', { qty: 60, at: CITIES.NAGPUR, hours: 1 });
+    await recordSignedEvent(batchD.id, apexBio, 'PACKAGED', { qty: 60, at: CITIES.NAGPUR, hours: 1 });
+    await recordSignedEvent(batchD.id, apexBio, 'DISPATCHED', {
+      to: mediDist,
+      qty: 60,
+      at: CITIES.NAGPUR,
+      hours: 1,
+      destination: 'DELHI',
+      note: 'Road freight via NH44 to Delhi distribution hub',
+    });
+
     // Fetch unit tokens for quick judge testing
     const sampleUnits = await withDb(async (db) => {
       const { rows: [uA] } = await db.query('SELECT id, serial FROM units WHERE batch_id = $1 AND serial = 1', [batchA.id]);
@@ -542,12 +598,12 @@ export async function seedFullDataset() {
     const tokenC = unitToken(sampleUnits.uC.id);
 
     // Seed initial scans:
-    // 1. Genuine scan on Batch A in London
-    await fetch(`http://localhost:${process.env.PORT || 3000}/api/verify/${tokenA}?city=London&lat=${CITIES.LONDON.lat}&lng=${CITIES.LONDON.lng}&device=consumer-phone-uk-01`).catch(() => {});
+    // 1. Genuine scan on Batch A in Chennai
+    await scanAt(sampleUnits.uA.id, CITIES.CHENNAI, 'consumer-phone-chennai-01').catch(() => {});
 
-    // 2. Impossible Travel clone scans on Batch B (Berlin -> Mumbai in seconds!)
-    await fetch(`http://localhost:${process.env.PORT || 3000}/api/verify/${tokenB}?city=Berlin&lat=${CITIES.BERLIN.lat}&lng=${CITIES.BERLIN.lng}&device=buyer-app-berlin-01`).catch(() => {});
-    await fetch(`http://localhost:${process.env.PORT || 3000}/api/verify/${tokenB}?city=Mumbai&lat=${CITIES.MUMBAI.lat}&lng=${CITIES.MUMBAI.lng}&device=counterfeit-scan-mumbai-99`).catch(() => {});
+    // 2. Impossible Travel clone scans on Batch B (Delhi -> Mumbai in seconds!)
+    await scanAt(sampleUnits.uB.id, CITIES.DELHI, 'buyer-app-delhi-01').catch(() => {});
+    await scanAt(sampleUnits.uB.id, CITIES.MUMBAI, 'counterfeit-scan-mumbai-99').catch(() => {});
 
     return {
       ok: true,
@@ -562,7 +618,7 @@ export async function seedFullDataset() {
           token: tokenA,
           expectedVerdict: 'Verified',
           expectedScore: 0.0,
-          description: 'Full 8 Ed25519-signed events from Berlin to Paris to London. Hash chain intact. Zero anomalies.',
+          description: 'Full 8 Ed25519-signed events from Hyderabad to Bengaluru to Chennai. Hash chain intact. Zero anomalies.',
           verifyUrl: `/verify/${tokenA}`,
           gs1Url: `/api/01/${batchA.gtin}/10/${batchA.batch_code}/21/1`,
         },
@@ -575,7 +631,7 @@ export async function seedFullDataset() {
           token: tokenB,
           expectedVerdict: 'Not verified',
           expectedScore: 0.8,
-          description: '12 units leaked in transit (R7 Quantity Mismatch) + Cloned photocopy scanned in Berlin and Mumbai (R4 Impossible Travel > 25,000 km/h).',
+          description: '12 units leaked in transit (R7 Quantity Mismatch) + Cloned photocopy scanned in Delhi and Mumbai (R4 Impossible Travel).',
           verifyUrl: `/verify/${tokenB}`,
           gs1Url: `/api/01/${batchB.gtin}/10/${batchB.batch_code}/21/1`,
         },
