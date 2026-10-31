@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { withDb } from '../db.ts';
-import { generateApiKey, generateKeyPair, keyFingerprint, sha256, canonicalize, sign, unitToken } from '../crypto.ts';
+import { canonicalize, sign, unitToken } from '../crypto.ts';
+import { findOrCreateSigner, insertPartner } from '../signing.ts';
 import { submitEvent } from '../services/events.ts';
 import { CITIES } from '../geo.ts';
 import { analyzeEvent } from '../worker.ts';
@@ -9,9 +10,6 @@ import { RULES } from '../rules.ts';
 import { performVerification } from './public.ts';
 
 const router = Router();
-
-// Demo partners' private keys (public key -> private key), kept in memory so later demo runs can sign as them
-const demoPrivateKeys = new Map<string, string>();
 
 function scanAt(unitId: string, city: { name: string; lat: number; lng: number }, deviceId: string) {
   return performVerification({ unitId, isTokenValid: true, lat: city.lat, lng: city.lng, city: city.name, deviceId });
@@ -46,53 +44,7 @@ router.post('/golden-path', async (_req, res, next) => {
       ];
 
       const loaded: Record<string, any> = {};
-
-      for (const r of roles) {
-        const { rows: [existing] } = await db.query(
-          'SELECT * FROM partners WHERE name = $1',
-          [r.name]
-        );
-
-        if (existing && demoPrivateKeys.has(existing.public_key)) {
-          loaded[r.role] = { ...existing, privateKey: demoPrivateKeys.get(existing.public_key) };
-          continue;
-        }
-
-        if (existing) {
-          // ponytail: key unknown to this process (e.g. restarted against an external DB), so rotate it.
-          // Older events by this partner will then fail the chain audit; re-seed to recover.
-          const keys = generateKeyPair();
-          demoPrivateKeys.set(keys.publicKey, keys.privateKey);
-          await db.query('UPDATE partners SET public_key = $1 WHERE id = $2', [keys.publicKey, existing.id]);
-          await db.query(
-            `INSERT INTO partner_keys (partner_id, public_key, fingerprint) VALUES ($1, $2, $3)`,
-            [existing.id, keys.publicKey, keyFingerprint(keys.publicKey)]
-          );
-          loaded[r.role] = { ...existing, public_key: keys.publicKey, privateKey: keys.privateKey };
-          continue;
-        }
-
-        const keys = generateKeyPair();
-        const apiKey = generateApiKey();
-        const apiKeyHash = sha256(apiKey);
-        const fp = keyFingerprint(keys.publicKey);
-
-        const { rows: [p] } = await db.query(
-          `INSERT INTO partners (name, role, country, public_key, api_key_hash)
-           VALUES ($1, $2, $3, $4, $5)
-           RETURNING *`,
-          [r.name, r.role, r.country, keys.publicKey, apiKeyHash]
-        );
-
-        await db.query(
-          `INSERT INTO partner_keys (partner_id, public_key, fingerprint) VALUES ($1, $2, $3)`,
-          [p.id, keys.publicKey, fp]
-        );
-
-        demoPrivateKeys.set(keys.publicKey, keys.privateKey);
-        loaded[r.role] = { ...p, apiKey, privateKey: keys.privateKey, publicKey: keys.publicKey };
-      }
-
+      for (const r of roles) loaded[r.role] = await findOrCreateSigner(db, r);
       return loaded;
     });
 
@@ -384,27 +336,7 @@ export async function seedFullDataset() {
 
       const loaded: Record<string, any> = {};
 
-      for (const pDef of partnerDefs) {
-        const keys = generateKeyPair();
-        const apiKey = generateApiKey();
-        const apiKeyHash = sha256(apiKey);
-        const fp = keyFingerprint(keys.publicKey);
-
-        const { rows: [p] } = await db.query(
-          `INSERT INTO partners (name, role, country, public_key, api_key_hash)
-           VALUES ($1, $2, $3, $4, $5)
-           RETURNING *`,
-          [pDef.name, pDef.role, pDef.country, keys.publicKey, apiKeyHash]
-        );
-
-        await db.query(
-          `INSERT INTO partner_keys (partner_id, public_key, fingerprint) VALUES ($1, $2, $3)`,
-          [p.id, keys.publicKey, fp]
-        );
-
-        demoPrivateKeys.set(keys.publicKey, keys.privateKey);
-        loaded[pDef.name] = { ...p, apiKey, privateKey: keys.privateKey, publicKey: keys.publicKey };
-      }
+      for (const pDef of partnerDefs) loaded[pDef.name] = await insertPartner(db, pDef);
 
       return loaded;
     });
@@ -419,7 +351,7 @@ export async function seedFullDataset() {
     const apolloHealth = partners['Apollo Health Retail'];
     const regulator = partners['CDSCO Drug Safety Authority'];
 
-    let globalClock = Date.now() - 48 * 36e5; // 48 hours ago
+    let globalClock = Date.now() - 62 * 36e5; // scenarios 1-3 span ~60h, so every event lands in the past
 
     async function recordSignedEvent(batchId: string, actor: any, type: string, opts: { to?: any; qty?: number; at?: any; hours?: number; note?: string; destination?: string } = {}) {
       globalClock += (opts.hours || 2) * 36e5;
