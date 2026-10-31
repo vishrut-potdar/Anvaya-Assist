@@ -1,0 +1,17 @@
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: provchain
+    ports: ["5432:5432"]
+    volumes:
+      # runs once, on first start of an empty volume
+      - ./db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql
+      - pgdata:/var/lib/postgresql/data
+  redis:
+    image: redis:7
+    ports: ["6379:6379"]
+volumes:
+  pgdata:

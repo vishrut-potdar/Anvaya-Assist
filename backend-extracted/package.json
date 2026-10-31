@@ -1,0 +1,19 @@
+{
+  "name": "provchain-backend",
+  "version": "0.1.0",
+  "type": "module",
+  "engines": { "node": ">=20.6" },
+  "scripts": {
+    "dev": "node --watch --env-file=.env src/server.js",
+    "start": "node --env-file=.env src/server.js",
+    "demo": "node --env-file=.env scripts/demo.js"
+  },
+  "dependencies": {
+    "bullmq": "^5.0.0",
+    "express": "^5.1.0",
+    "ioredis": "^5.4.0",
+    "pg": "^8.12.0",
+    "qrcode": "^1.5.4",
+    "zod": "^3.23.8"
+  }
+}

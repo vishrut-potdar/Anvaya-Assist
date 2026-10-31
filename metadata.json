@@ -1,0 +1,6 @@
+{
+  "name": "ProvChain - Clone-Evident Provenance Ledger",
+  "description": "Research-grade supply chain provenance ledger with Ed25519-signed events, append-only hash-chained event logs, deterministic anomaly detection, and GS1 Digital Link verification.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
