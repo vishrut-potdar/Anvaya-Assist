@@ -1,6 +1,7 @@
 export const config = {
   port: Number(process.env.PORT) || 3000,
-  databaseUrl: process.env.DATABASE_URL || '',
+  // Neon/Vercel Postgres integrations may expose the connection string under either name
+  databaseUrl: process.env.DATABASE_URL || process.env.POSTGRES_URL || '',
   redisUrl: process.env.REDIS_URL || '',
   qrSecret: process.env.QR_SECRET || 'hacknova-provchain-secret-key-32bytes-secure-2026',
   adminKey: process.env.ADMIN_KEY || 'provchain-admin-secret-key',
