@@ -46,6 +46,8 @@ import {
   ShieldOff,
   User,
   Boxes,
+  Award,
+  Sliders,
 } from 'lucide-react';
 import ScanGeoHistoryChart, { ScanHistoryEntry } from './components/ScanGeoHistoryChart.tsx';
 
@@ -114,6 +116,9 @@ export default function App() {
   >('dashboard');
 
   const [analyticsCategory, setAnalyticsCategory] = useState<'ship' | 'truck' | 'plane' | 'delivery'>('ship');
+  const [analyticsTimeRange, setAnalyticsTimeRange] = useState<'This year' | 'Last 6 months' | 'Last 30 days'>('This year');
+  const [isTimeDropdownOpen, setIsTimeDropdownOpen] = useState(false);
+  const [hoveredCol, setHoveredCol] = useState<number | null>(null);
   const [shipmentFilter, setShipmentFilter] = useState<'notable' | 'delivered' | 'shipping'>('notable');
   const [searchQuery, setSearchQuery] = useState('');
 
@@ -347,21 +352,260 @@ export default function App() {
     }
   }
 
-  // Dotted column chart data matching the screenshot
-  const dottedChartColumns = [
-    { month: 'Jan', dots: 4 },
-    { month: 'Feb', dots: 6 },
-    { month: 'Mar', dots: 7 },
-    { month: 'Apr', dots: 8 },
-    { month: 'May', dots: 12, highlight: true },
-    { month: 'Jun', dots: 8 },
-    { month: 'Jul', dots: 7 },
-    { month: 'Aug', dots: 6 },
-    { month: 'Sep', dots: 9 },
-    { month: 'Oct', dots: 11 },
-    { month: 'Nov', dots: 9 },
-    { month: 'Dec', dots: 8 },
-  ];
+  async function handleDemoVerify(tokenOrBatch: string, city?: string) {
+    let targetToken = tokenOrBatch;
+    if (tokenOrBatch.startsWith('LOT-')) {
+      const b = batches.find((x) => x.batch_code === tokenOrBatch);
+      if (b) {
+        setSelectedBatchId(b.id);
+        try {
+          const uRes = await fetch(`/api/batches/${b.id}/units?limit=1`).then((r) => r.json());
+          if (uRes.ok && uRes.units?.[0]) {
+            targetToken = uRes.units[0].token;
+          }
+        } catch (e) {
+          console.error(e);
+        }
+      }
+    }
+    setVerifyTokenInput(targetToken);
+    if (city) setVerifyCity(city);
+    setActiveTab('delivery');
+
+    // Automatically trigger verification on target
+    setVerifyLoading(true);
+    try {
+      const res = await fetch(`/api/verify/${encodeURIComponent(targetToken.trim())}?city=${encodeURIComponent(city || verifyCity)}`).then((r) => r.json());
+      setVerifyResult(res);
+      setStatusMessage(`Verification complete: Verdict is ${res.verdict} (Risk Score: ${res.score})`);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setVerifyLoading(false);
+    }
+  }
+
+  function handleDemoBatchInspect(batchCode: string) {
+    const b = batches.find((x) => x.batch_code === batchCode);
+    if (b) {
+      setSelectedBatchId(b.id);
+      setActiveTab('inventory');
+      handleRecallTrace(b.id);
+    } else {
+      setActiveTab('order');
+    }
+  }
+
+  // Dynamic analytics data per transport mode & time range
+  const analyticsDataMap = {
+    ship: {
+      title: 'Ocean Cold-Chain Freight',
+      badge: 'Maritime Freight • 42 Active Vessels',
+      activeColor: 'bg-blue-600',
+      activeBorder: 'border-blue-600',
+      activeBg: 'bg-blue-50/50',
+      activeText: 'text-blue-600',
+      dotColor: 'bg-blue-600',
+      highlightDotColor: 'bg-blue-700 ring-4 ring-blue-100 shadow-md',
+      barColor: 'bg-blue-600',
+      tonnageLabel: 'Ship Freight',
+      tonnageValue: '2,345,500',
+      fleetCount: 'Total: 1,247 vehicles',
+      tonnagePercent: '74%',
+      countryFlag: '🇺🇸',
+      countryName: 'United States',
+      countryVisits: '9,763',
+      countryChange: '+7.4%',
+      countrySubtitle: '20 countries share 97% visits',
+      yLabels: ['70K', '60K', '50K', '40K', '30K', '20K', '10K', '0K'],
+      columns: {
+        'This year': [
+          { label: 'Jan', dots: 4, value: '20,000 DWT' },
+          { label: 'Feb', dots: 6, value: '30,000 DWT' },
+          { label: 'Mar', dots: 7, value: '35,000 DWT' },
+          { label: 'Apr', dots: 8, value: '40,000 DWT' },
+          { label: 'May', dots: 12, value: '60,000 DWT', highlight: true },
+          { label: 'Jun', dots: 8, value: '40,000 DWT' },
+          { label: 'Jul', dots: 7, value: '35,000 DWT' },
+          { label: 'Aug', dots: 6, value: '30,000 DWT' },
+          { label: 'Sep', dots: 9, value: '45,000 DWT' },
+          { label: 'Oct', dots: 11, value: '55,000 DWT' },
+          { label: 'Nov', dots: 9, value: '45,000 DWT' },
+          { label: 'Dec', dots: 8, value: '40,000 DWT' },
+        ],
+        'Last 6 months': [
+          { label: 'May', dots: 12, value: '60,000 DWT', highlight: true },
+          { label: 'Jun', dots: 8, value: '40,000 DWT' },
+          { label: 'Jul', dots: 7, value: '35,000 DWT' },
+          { label: 'Aug', dots: 6, value: '30,000 DWT' },
+          { label: 'Sep', dots: 9, value: '45,000 DWT' },
+          { label: 'Oct', dots: 11, value: '55,000 DWT' },
+        ],
+        'Last 30 days': [
+          { label: 'W1', dots: 5, value: '12,500 DWT' },
+          { label: 'W2', dots: 9, value: '22,500 DWT' },
+          { label: 'W3', dots: 11, value: '27,500 DWT', highlight: true },
+          { label: 'W4', dots: 8, value: '20,000 DWT' },
+        ],
+      },
+    },
+    truck: {
+      title: 'Overland Reefer Logistics',
+      badge: 'Ground Cold-Chain • 684 Active Trucks',
+      activeColor: 'bg-indigo-600',
+      activeBorder: 'border-indigo-600',
+      activeBg: 'bg-indigo-50/50',
+      activeText: 'text-indigo-600',
+      dotColor: 'bg-indigo-600',
+      highlightDotColor: 'bg-indigo-700 ring-4 ring-indigo-100 shadow-md',
+      barColor: 'bg-indigo-600',
+      tonnageLabel: 'Overland Reefer Freight',
+      tonnageValue: '840,200',
+      fleetCount: 'Total: 684 reefer trucks',
+      tonnagePercent: '88%',
+      countryFlag: '🇩🇪',
+      countryName: 'Germany',
+      countryVisits: '14,290',
+      countryChange: '+12.3%',
+      countrySubtitle: '14 transit hubs across EU corridor',
+      yLabels: ['50K', '40K', '30K', '25K', '20K', '15K', '10K', '0K'],
+      columns: {
+        'This year': [
+          { label: 'Jan', dots: 8, value: '28,000 KG' },
+          { label: 'Feb', dots: 9, value: '31,500 KG' },
+          { label: 'Mar', dots: 11, value: '38,500 KG' },
+          { label: 'Apr', dots: 10, value: '35,000 KG' },
+          { label: 'May', dots: 11, value: '38,500 KG' },
+          { label: 'Jun', dots: 14, value: '49,000 KG', highlight: true },
+          { label: 'Jul', dots: 12, value: '42,000 KG' },
+          { label: 'Aug', dots: 11, value: '38,500 KG' },
+          { label: 'Sep', dots: 13, value: '45,500 KG' },
+          { label: 'Oct', dots: 13, value: '45,500 KG' },
+          { label: 'Nov', dots: 10, value: '35,000 KG' },
+          { label: 'Dec', dots: 9, value: '31,500 KG' },
+        ],
+        'Last 6 months': [
+          { label: 'May', dots: 11, value: '38,500 KG' },
+          { label: 'Jun', dots: 14, value: '49,000 KG', highlight: true },
+          { label: 'Jul', dots: 12, value: '42,000 KG' },
+          { label: 'Aug', dots: 11, value: '38,500 KG' },
+          { label: 'Sep', dots: 13, value: '45,500 KG' },
+          { label: 'Oct', dots: 13, value: '45,500 KG' },
+        ],
+        'Last 30 days': [
+          { label: 'W1', dots: 9, value: '11,200 KG' },
+          { label: 'W2', dots: 13, value: '16,250 KG', highlight: true },
+          { label: 'W3', dots: 10, value: '12,500 KG' },
+          { label: 'W4', dots: 12, value: '15,000 KG' },
+        ],
+      },
+    },
+    plane: {
+      title: 'Cryogenic Air Express (-80°C)',
+      badge: 'Air Cargo Express • 38 Cargo Flights',
+      activeColor: 'bg-sky-600',
+      activeBorder: 'border-sky-600',
+      activeBg: 'bg-sky-50/50',
+      activeText: 'text-sky-600',
+      dotColor: 'bg-sky-600',
+      highlightDotColor: 'bg-sky-700 ring-4 ring-sky-100 shadow-md',
+      barColor: 'bg-sky-600',
+      tonnageLabel: 'Cryogenic Air Cargo',
+      tonnageValue: '142,800',
+      fleetCount: 'Total: 38 cargo flights',
+      tonnagePercent: '62%',
+      countryFlag: '🇬🇧',
+      countryName: 'United Kingdom',
+      countryVisits: '6,812',
+      countryChange: '+18.9%',
+      countrySubtitle: '12 international air cargo terminals',
+      yLabels: ['30K', '25K', '20K', '15K', '10K', '7K', '4K', '0K'],
+      columns: {
+        'This year': [
+          { label: 'Jan', dots: 11, value: '22,000 KG' },
+          { label: 'Feb', dots: 13, value: '26,000 KG', highlight: true },
+          { label: 'Mar', dots: 8, value: '16,000 KG' },
+          { label: 'Apr', dots: 6, value: '12,000 KG' },
+          { label: 'May', dots: 5, value: '10,000 KG' },
+          { label: 'Jun', dots: 4, value: '8,000 KG' },
+          { label: 'Jul', dots: 5, value: '10,000 KG' },
+          { label: 'Aug', dots: 4, value: '8,000 KG' },
+          { label: 'Sep', dots: 7, value: '14,000 KG' },
+          { label: 'Oct', dots: 9, value: '18,000 KG' },
+          { label: 'Nov', dots: 11, value: '22,000 KG' },
+          { label: 'Dec', dots: 12, value: '24,000 KG' },
+        ],
+        'Last 6 months': [
+          { label: 'May', dots: 5, value: '10,000 KG' },
+          { label: 'Jun', dots: 4, value: '8,000 KG' },
+          { label: 'Jul', dots: 5, value: '10,000 KG' },
+          { label: 'Aug', dots: 4, value: '8,000 KG' },
+          { label: 'Sep', dots: 7, value: '14,000 KG' },
+          { label: 'Oct', dots: 9, value: '18,000 KG', highlight: true },
+        ],
+        'Last 30 days': [
+          { label: 'W1', dots: 6, value: '4,500 KG' },
+          { label: 'W2', dots: 8, value: '6,000 KG' },
+          { label: 'W3', dots: 10, value: '7,500 KG', highlight: true },
+          { label: 'W4', dots: 7, value: '5,250 KG' },
+        ],
+      },
+    },
+    delivery: {
+      title: 'Apothecary & Consumer GS1 Scans',
+      badge: 'Point-of-Sale Dispensation • 100% GS1 Compliant',
+      activeColor: 'bg-emerald-600',
+      activeBorder: 'border-emerald-600',
+      activeBg: 'bg-emerald-50/50',
+      activeText: 'text-emerald-600',
+      dotColor: 'bg-emerald-600',
+      highlightDotColor: 'bg-emerald-700 ring-4 ring-emerald-100 shadow-md',
+      barColor: 'bg-emerald-600',
+      tonnageLabel: 'GS1 Units Dispensed',
+      tonnageValue: '41,200',
+      fleetCount: 'Total: 182 Partner Dispensaries',
+      tonnagePercent: '96%',
+      countryFlag: '🇫🇷',
+      countryName: 'France',
+      countryVisits: '11,450',
+      countryChange: '+9.1%',
+      countrySubtitle: '182 verified clinical & retail dispensaries',
+      yLabels: ['40K', '35K', '30K', '25K', '20K', '15K', '10K', '0K'],
+      columns: {
+        'This year': [
+          { label: 'Jan', dots: 3, value: '7,500 Units' },
+          { label: 'Feb', dots: 5, value: '12,500 Units' },
+          { label: 'Mar', dots: 6, value: '15,000 Units' },
+          { label: 'Apr', dots: 8, value: '20,000 Units' },
+          { label: 'May', dots: 9, value: '22,500 Units' },
+          { label: 'Jun', dots: 10, value: '25,000 Units' },
+          { label: 'Jul', dots: 11, value: '27,500 Units' },
+          { label: 'Aug', dots: 11, value: '27,500 Units' },
+          { label: 'Sep', dots: 13, value: '32,500 Units' },
+          { label: 'Oct', dots: 15, value: '37,500 Units', highlight: true },
+          { label: 'Nov', dots: 13, value: '32,500 Units' },
+          { label: 'Dec', dots: 12, value: '30,000 Units' },
+        ],
+        'Last 6 months': [
+          { label: 'May', dots: 9, value: '22,500 Units' },
+          { label: 'Jun', dots: 10, value: '25,000 Units' },
+          { label: 'Jul', dots: 11, value: '27,500 Units' },
+          { label: 'Aug', dots: 11, value: '27,500 Units' },
+          { label: 'Sep', dots: 13, value: '32,500 Units' },
+          { label: 'Oct', dots: 15, value: '37,500 Units', highlight: true },
+        ],
+        'Last 30 days': [
+          { label: 'W1', dots: 8, value: '8,000 Units' },
+          { label: 'W2', dots: 10, value: '10,000 Units' },
+          { label: 'W3', dots: 13, value: '13,000 Units', highlight: true },
+          { label: 'W4', dots: 11, value: '11,000 Units' },
+        ],
+      },
+    },
+  };
+
+  const currentAnalytics = analyticsDataMap[analyticsCategory];
+  const currentChartColumns = currentAnalytics.columns[analyticsTimeRange] || currentAnalytics.columns['This year'];
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-800 flex font-sans antialiased">
@@ -415,7 +659,7 @@ export default function App() {
                 <button
                   key={item.id}
                   onClick={() => setActiveTab(item.id as any)}
-                  className={`w-full flex items-center space-x-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition ${
+                  className={`w-full flex items-center space-x-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition cursor-pointer ${
                     isActive
                       ? 'bg-blue-600 text-white shadow-md shadow-blue-500/25'
                       : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
@@ -435,7 +679,7 @@ export default function App() {
             </span>
 
             <button
-              onClick={() => setActiveTab('guide')}
+              onClick={() => setActiveTab('reports')}
               className={`w-full flex items-center space-x-3 px-3 py-2 rounded-xl text-xs font-medium transition ${
                 activeTab === 'guide'
                   ? 'bg-blue-600 text-white shadow-md shadow-blue-500/25'
@@ -443,7 +687,7 @@ export default function App() {
               }`}
             >
               <User className="w-4 h-4 text-slate-400" />
-              <span>User Guide / Demo</span>
+              <span>User Guide / Docs</span>
             </button>
 
             <button
@@ -548,7 +792,7 @@ export default function App() {
           {/* TAB: DASHBOARD (Exact Match to Screenshot) */}
           {activeTab === 'dashboard' && (
             <div className="space-y-6">
-              {/* TOP 4 KPI CARDS (Matching image layout & colors) */}
+              {/* TOP 4 KPI CARDS (Live Data from Provenance Ledger) */}
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
                 {/* CARD 1: Solid Hero Blue Card */}
                 <div className="bg-blue-600 text-white rounded-2xl p-5 shadow-lg shadow-blue-500/25 flex flex-col justify-between h-36">
@@ -556,16 +800,18 @@ export default function App() {
                     <div className="w-9 h-9 rounded-xl bg-white/20 backdrop-blur flex items-center justify-center text-white">
                       <Package className="w-4 h-4" />
                     </div>
-                    <button className="text-white/70 hover:text-white">
-                      <MoreVertical className="w-4 h-4" />
-                    </button>
+                    <span className="text-[10px] font-semibold text-white/90 bg-white/20 px-2 py-0.5 rounded-full">
+                      {batches.length} Batches
+                    </span>
                   </div>
                   <div>
-                    <span className="text-[11px] text-white/80 font-medium block">Total Order</span>
+                    <span className="text-[11px] text-white/80 font-medium block">Total Units Monitored</span>
                     <div className="flex items-baseline justify-between mt-0.5">
-                      <span className="text-2xl font-bold tracking-tight text-white">$238.00</span>
-                      <span className="text-[11px] font-semibold text-white/90 bg-white/20 px-2 py-0.5 rounded-full">
-                        +1.29%
+                      <span className="text-2xl font-bold tracking-tight text-white">
+                        {batches.reduce((sum, b) => sum + (b.quantity || 0), 0).toLocaleString()} Units
+                      </span>
+                      <span className="text-[11px] font-semibold text-emerald-300 flex items-center gap-0.5">
+                        100% Serialized
                       </span>
                     </div>
                   </div>
@@ -577,58 +823,72 @@ export default function App() {
                     <div className="w-9 h-9 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center">
                       <Truck className="w-4 h-4" />
                     </div>
-                    <button className="text-slate-400 hover:text-slate-600">
-                      <MoreVertical className="w-4 h-4" />
-                    </button>
+                    <span className="text-[10px] font-semibold text-blue-700 bg-blue-50 px-2 py-0.5 rounded-full border border-blue-100">
+                      GS1 Digital Link
+                    </span>
                   </div>
                   <div>
-                    <span className="text-[11px] text-slate-400 font-medium block">Total Delivery</span>
+                    <span className="text-[11px] text-slate-400 font-medium block">Delivered & In-Custody</span>
                     <div className="flex items-baseline justify-between mt-0.5">
-                      <span className="text-2xl font-bold tracking-tight text-slate-900">$35,874</span>
+                      <span className="text-2xl font-bold tracking-tight text-slate-900">
+                        {batches.filter((b) => b.state === 'SOLD').length} Batches
+                      </span>
                       <span className="text-[11px] font-semibold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full">
-                        +1.29%
+                        {Math.round(((batches.filter((b) => b.state === 'SOLD').length) / (batches.length || 1)) * 100)}% Complete
                       </span>
                     </div>
                   </div>
                 </div>
 
-                {/* CARD 3: White Return Pending */}
+                {/* CARD 3: White Return Pending / Recalled */}
                 <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-xs flex flex-col justify-between h-36">
                   <div className="flex items-center justify-between">
-                    <div className="w-9 h-9 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center">
+                    <div className="w-9 h-9 rounded-xl bg-rose-50 text-rose-600 flex items-center justify-center">
                       <RotateCcw className="w-4 h-4" />
                     </div>
-                    <button className="text-slate-400 hover:text-slate-600">
-                      <MoreVertical className="w-4 h-4" />
-                    </button>
+                    <span className="text-[10px] font-bold text-rose-700 bg-rose-50 px-2 py-0.5 rounded-full border border-rose-100">
+                      {batches.filter((b) => b.is_recalled).length} Recall Active
+                    </span>
                   </div>
                   <div>
-                    <span className="text-[11px] text-slate-400 font-medium block">Return Pending</span>
+                    <span className="text-[11px] text-slate-400 font-medium block">Anomalies & Quarantined</span>
                     <div className="flex items-baseline justify-between mt-0.5">
-                      <span className="text-2xl font-bold tracking-tight text-slate-900">64%</span>
+                      <span className="text-2xl font-bold tracking-tight text-slate-900">
+                        {alerts.length} Alerts
+                      </span>
                       <span className="text-[11px] font-semibold text-rose-600 bg-rose-50 px-2 py-0.5 rounded-full">
-                        -1.29%
+                        R4 / R7 / R9
                       </span>
                     </div>
                   </div>
                 </div>
 
-                {/* CARD 4: White Total Order */}
+                {/* CARD 4: White Ledger Integrity */}
                 <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-xs flex flex-col justify-between h-36">
                   <div className="flex items-center justify-between">
-                    <div className="w-9 h-9 rounded-xl bg-purple-50 text-purple-600 flex items-center justify-center">
+                    <div className={`w-9 h-9 rounded-xl flex items-center justify-center ${
+                      chainStatus?.valid
+                        ? 'bg-emerald-50 text-emerald-600'
+                        : 'bg-rose-50 text-rose-600'
+                    }`}>
                       <ShieldCheck className="w-4 h-4" />
                     </div>
-                    <button className="text-slate-400 hover:text-slate-600">
-                      <MoreVertical className="w-4 h-4" />
-                    </button>
+                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                      chainStatus?.valid
+                        ? 'text-emerald-700 bg-emerald-50 border-emerald-200'
+                        : 'text-rose-700 bg-rose-50 border-rose-200'
+                    }`}>
+                      {chainStatus?.valid ? 'Ed25519 Verified' : 'Integrity Broken'}
+                    </span>
                   </div>
                   <div>
-                    <span className="text-[11px] text-slate-400 font-medium block">Ledger Integrity</span>
+                    <span className="text-[11px] text-slate-400 font-medium block">Cryptographic Hash Chain</span>
                     <div className="flex items-baseline justify-between mt-0.5">
-                      <span className="text-2xl font-bold tracking-tight text-slate-900">$238.00</span>
-                      <span className="text-[11px] font-semibold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full">
-                        +1.29%
+                      <span className="text-2xl font-bold tracking-tight text-slate-900">
+                        {chainStatus?.valid ? '100% Intact' : 'Tampered'}
+                      </span>
+                      <span className="text-[11px] font-semibold text-slate-500 font-mono">
+                        {chainStatus?.totalEventsChecked || chainStatus?.totalEvents || 0} events
                       </span>
                     </div>
                   </div>
@@ -641,10 +901,15 @@ export default function App() {
                 <div className="lg:col-span-8 space-y-6">
                   {/* Analytics Card */}
                   <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-xs space-y-5">
-                    {/* Top Row: Title, Category Pills, and Year filter */}
+                    {/* Top Row: Title, Category Pills, and Time range dropdown */}
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                       <div className="flex items-center space-x-4">
-                        <h3 className="font-bold text-base text-slate-900">Analytics</h3>
+                        <div>
+                          <h3 className="font-bold text-base text-slate-900">Analytics</h3>
+                          <span className="text-[10px] text-slate-400 font-medium block">
+                            {currentAnalytics.badge}
+                          </span>
+                        </div>
 
                         {/* Category switch tabs [ Ship | Truck | Plane | Delivery ] */}
                         <div className="flex items-center space-x-1 border-b border-slate-100 pb-0.5">
@@ -656,13 +921,14 @@ export default function App() {
                           ].map((cat) => {
                             const Icon = cat.icon;
                             const isSelected = analyticsCategory === cat.id;
+                            const catConfig = analyticsDataMap[cat.id as keyof typeof analyticsDataMap];
                             return (
                               <button
                                 key={cat.id}
                                 onClick={() => setAnalyticsCategory(cat.id as any)}
-                                className={`flex items-center space-x-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition ${
+                                className={`flex items-center space-x-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition cursor-pointer ${
                                   isSelected
-                                    ? 'text-blue-600 border-b-2 border-blue-600 bg-blue-50/50'
+                                    ? `${catConfig.activeText} border-b-2 ${catConfig.activeBorder} ${catConfig.activeBg}`
                                     : 'text-slate-400 hover:text-slate-600'
                                 }`}
                               >
@@ -675,72 +941,121 @@ export default function App() {
                       </div>
 
                       {/* Dropdown filter */}
-                      <button className="flex items-center space-x-1.5 text-xs font-semibold text-slate-500 bg-slate-50 hover:bg-slate-100 px-3 py-1.5 rounded-xl border border-slate-200 transition">
-                        <span>This year</span>
-                        <ChevronDown className="w-3.5 h-3.5 text-slate-400" />
-                      </button>
+                      <div className="relative">
+                        <button
+                          onClick={() => setIsTimeDropdownOpen(!isTimeDropdownOpen)}
+                          className="flex items-center space-x-1.5 text-xs font-semibold text-slate-600 bg-slate-50 hover:bg-slate-100 px-3 py-1.5 rounded-xl border border-slate-200 transition cursor-pointer"
+                        >
+                          <span>{analyticsTimeRange}</span>
+                          <ChevronDown className="w-3.5 h-3.5 text-slate-400" />
+                        </button>
+
+                        {isTimeDropdownOpen && (
+                          <div className="absolute right-0 mt-1 w-36 bg-white border border-slate-200 rounded-xl shadow-lg z-20 py-1 text-xs">
+                            {(['This year', 'Last 6 months', 'Last 30 days'] as const).map((range) => (
+                              <button
+                                key={range}
+                                onClick={() => {
+                                  setAnalyticsTimeRange(range);
+                                  setIsTimeDropdownOpen(false);
+                                }}
+                                className={`w-full text-left px-3 py-1.5 hover:bg-slate-50 transition flex items-center justify-between ${
+                                  analyticsTimeRange === range ? 'font-bold text-blue-600 bg-blue-50/50' : 'text-slate-600'
+                                }`}
+                              >
+                                <span>{range}</span>
+                                {analyticsTimeRange === range && <Check className="w-3.5 h-3.5 text-blue-600" />}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
                     </div>
 
-                    {/* Dotted Bubble Column Chart (Matching Screenshot!) */}
+                    {/* Dotted Bubble Column Chart (Dynamically rendered per category & time range) */}
                     <div className="relative pt-2 pb-4">
                       {/* Left Y-axis labels */}
                       <div className="flex">
                         <div className="w-10 flex flex-col justify-between text-[10px] text-slate-400 font-mono py-1 pr-2 text-right select-none">
-                          <span>70K</span>
-                          <span>60K</span>
-                          <span>50K</span>
-                          <span>40K</span>
-                          <span>30K</span>
-                          <span>20K</span>
-                          <span>10K</span>
-                          <span>0K</span>
+                          {currentAnalytics.yLabels.map((yl, yIdx) => (
+                            <span key={yIdx}>{yl}</span>
+                          ))}
                         </div>
 
-                        {/* 12 Columns with stacked circular dots */}
-                        <div className="flex-1 grid grid-cols-12 gap-2 h-56 items-end border-b border-slate-100 pb-2 px-1">
-                          {dottedChartColumns.map((col, idx) => (
-                            <div key={idx} className="flex flex-col items-center justify-end h-full group cursor-pointer">
-                              {/* Stacked circular dots */}
-                              <div className="flex flex-col-reverse items-center space-y-reverse space-y-1">
-                                {Array.from({ length: col.dots }).map((_, dIdx) => {
-                                  const isTop = dIdx === col.dots - 1;
-                                  return (
-                                    <span
-                                      key={dIdx}
-                                      className={`rounded-full transition-transform group-hover:scale-110 ${
-                                        col.highlight && isTop
-                                          ? 'w-3.5 h-3.5 bg-blue-700 ring-4 ring-blue-100 shadow-md'
-                                          : 'w-2.5 h-2.5 bg-blue-600'
-                                      }`}
-                                    />
-                                  );
-                                })}
-                              </div>
+                        {/* Columns with stacked circular dots */}
+                        <div
+                          className={`flex-1 grid gap-2 h-56 items-end border-b border-slate-100 pb-2 px-1 ${
+                            currentChartColumns.length === 12
+                              ? 'grid-cols-12'
+                              : currentChartColumns.length === 6
+                              ? 'grid-cols-6'
+                              : 'grid-cols-4'
+                          }`}
+                        >
+                          {currentChartColumns.map((col: any, idx: number) => {
+                            const isHovered = hoveredCol === idx;
+                            return (
+                              <div
+                                key={idx}
+                                onMouseEnter={() => setHoveredCol(idx)}
+                                onMouseLeave={() => setHoveredCol(null)}
+                                className="relative flex flex-col items-center justify-end h-full group cursor-pointer"
+                              >
+                                {/* Tooltip on Hover */}
+                                {isHovered && (
+                                  <div className="absolute -top-10 bg-slate-900 text-white text-[10px] py-1 px-2 rounded shadow-md pointer-events-none whitespace-nowrap z-10 flex flex-col items-center">
+                                    <span className="font-bold">{col.label}: {col.value}</span>
+                                    <div className="w-1.5 h-1.5 bg-slate-900 rotate-45 -mb-1 mt-0.5" />
+                                  </div>
+                                )}
 
-                              {/* Month label */}
-                              <span className="text-[10px] font-medium text-slate-400 mt-2 group-hover:text-blue-600">
-                                {col.month}
-                              </span>
-                            </div>
-                          ))}
+                                {/* Stacked circular dots */}
+                                <div className="flex flex-col-reverse items-center space-y-reverse space-y-1">
+                                  {Array.from({ length: col.dots }).map((_, dIdx) => {
+                                    const isTop = dIdx === col.dots - 1;
+                                    return (
+                                      <span
+                                        key={dIdx}
+                                        className={`rounded-full transition-all duration-300 group-hover:scale-125 ${
+                                          col.highlight && isTop
+                                            ? `w-3.5 h-3.5 ${currentAnalytics.highlightDotColor}`
+                                            : `w-2.5 h-2.5 ${currentAnalytics.dotColor}`
+                                        }`}
+                                      />
+                                    );
+                                  })}
+                                </div>
+
+                                {/* Column label */}
+                                <span className={`text-[10px] font-medium mt-2 transition ${
+                                  isHovered ? `${currentAnalytics.activeText} font-bold` : 'text-slate-400 group-hover:text-slate-700'
+                                }`}>
+                                  {col.label}
+                                </span>
+                              </div>
+                            );
+                          })}
                         </div>
                       </div>
                     </div>
 
-                    {/* Bottom Sub-Widgets: Fleet Tonnage & Visits by Country */}
+                    {/* Bottom Sub-Widgets: Fleet Tonnage & Visits by Country (Dynamic per category) */}
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2 border-t border-slate-100">
-                      {/* Sub-Card 1: Our Fleet Tonnage */}
+                      {/* Sub-Card 1: Fleet Tonnage / Dispatch Volume */}
                       <div className="bg-slate-50/70 border border-slate-200/80 rounded-xl p-4 space-y-2">
                         <div className="flex items-center justify-between text-xs">
                           <span className="font-bold text-slate-800">Our Fleet Tonnage</span>
-                          <span className="text-[11px] text-slate-400">Total: 1,247 vehicles</span>
+                          <span className="text-[11px] text-slate-400">{currentAnalytics.fleetCount}</span>
                         </div>
                         <div className="flex items-center justify-between text-xs pt-1">
-                          <span className="text-slate-500 font-medium">Ship Freight</span>
-                          <span className="font-bold text-slate-900 font-mono">2,345,500</span>
+                          <span className="text-slate-500 font-medium">{currentAnalytics.tonnageLabel}</span>
+                          <span className="font-bold text-slate-900 font-mono">{currentAnalytics.tonnageValue}</span>
                         </div>
                         <div className="w-full h-2 bg-slate-200 rounded-full overflow-hidden">
-                          <div className="h-full bg-blue-600 rounded-full" style={{ width: '74%' }} />
+                          <div
+                            className={`h-full ${currentAnalytics.barColor} rounded-full transition-all duration-500`}
+                            style={{ width: currentAnalytics.tonnagePercent }}
+                          />
                         </div>
                       </div>
 
@@ -748,17 +1063,17 @@ export default function App() {
                       <div className="bg-slate-50/70 border border-slate-200/80 rounded-xl p-4 space-y-2">
                         <div className="flex items-center justify-between text-xs">
                           <span className="font-bold text-slate-800">Visits by Country</span>
-                          <span className="text-[11px] text-slate-400">20 countries share 97% visits</span>
+                          <span className="text-[11px] text-slate-400">{currentAnalytics.countrySubtitle}</span>
                         </div>
                         <div className="flex items-center justify-between text-xs pt-1">
                           <div className="flex items-center space-x-2">
-                            <span className="text-base leading-none">🇺🇸</span>
-                            <span className="text-slate-700 font-medium">United States</span>
+                            <span className="text-base leading-none">{currentAnalytics.countryFlag}</span>
+                            <span className="text-slate-700 font-medium">{currentAnalytics.countryName}</span>
                           </div>
                           <div className="flex items-center space-x-2">
-                            <span className="font-bold text-slate-900 font-mono">9,763</span>
+                            <span className="font-bold text-slate-900 font-mono">{currentAnalytics.countryVisits}</span>
                             <span className="text-[10px] font-semibold text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded">
-                              +7.4%
+                              {currentAnalytics.countryChange}
                             </span>
                           </div>
                         </div>
@@ -799,97 +1114,110 @@ export default function App() {
 
                     {/* Shipment History Cards List */}
                     <div className="space-y-3 max-h-[480px] overflow-y-auto pr-1">
-                      {/* Item 1: Delivered */}
-                      <div className="bg-white border border-slate-200 rounded-xl p-3.5 space-y-2 hover:border-slate-300 transition shadow-xs">
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center space-x-2.5">
-                            <div className="w-8 h-8 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center font-bold">
-                              <Ship className="w-4 h-4" />
-                            </div>
-                            <div>
-                              <span className="text-[10px] text-slate-400 block font-medium">Ship Freight</span>
-                              <span className="text-xs font-bold text-slate-900 font-mono">#5635-342808</span>
-                            </div>
-                          </div>
-                          <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2.5 py-0.5 rounded-full border border-emerald-200">
-                            Delivered
-                          </span>
-                        </div>
+                      {batches.length > 0 ? (
+                        batches
+                          .filter((b) => {
+                            if (shipmentFilter === 'delivered') return b.state === 'SOLD' && !b.is_recalled;
+                            if (shipmentFilter === 'shipping') return b.state !== 'SOLD' && !b.is_recalled;
+                            return true; // notable shows all
+                          })
+                          .map((b) => {
+                            const isRecalled = b.is_recalled;
+                            const isSold = b.state === 'SOLD';
+                            const isSuspect = b.batch_code.includes('SUSPECT');
 
-                        {/* Route Timeline with red/blue dots */}
-                        <div className="pl-3.5 space-y-1.5 text-[11px] text-slate-500 border-l border-slate-200 ml-4 py-1">
-                          <div className="flex items-center space-x-2">
-                            <span className="w-2 h-2 rounded-full bg-rose-500 ring-2 ring-white -ml-[17px]" />
-                            <span>Messina Harbor, Sicily, Italy</span>
-                          </div>
-                          <div className="flex items-center space-x-2">
-                            <span className="w-2 h-2 rounded-full bg-blue-600 ring-2 ring-white -ml-[17px]" />
-                            <span>Malakor Container Hotel, Tallinn, EST</span>
-                          </div>
-                        </div>
-                      </div>
+                            const originCity = b.batch_code.includes('GENUINE')
+                              ? 'BioVax Global GmbH, Berlin (DE)'
+                              : b.batch_code.includes('SUSPECT')
+                              ? 'ApexBio Pharma Plant, Nagpur (IN)'
+                              : 'ApexBio Synthesis Lab, Mumbai (IN)';
 
-                      {/* Item 2: Shipping */}
-                      <div className="bg-white border border-slate-200 rounded-xl p-3.5 space-y-2 hover:border-slate-300 transition shadow-xs">
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center space-x-2.5">
-                            <div className="w-8 h-8 rounded-full bg-amber-50 text-amber-600 flex items-center justify-center font-bold">
-                              <Truck className="w-4 h-4" />
-                            </div>
-                            <div>
-                              <span className="text-[10px] text-slate-400 block font-medium">Ship Freight</span>
-                              <span className="text-xs font-bold text-slate-900 font-mono">#5635-342809</span>
-                            </div>
-                          </div>
-                          <span className="text-[10px] font-bold text-amber-600 bg-amber-50 px-2.5 py-0.5 rounded-full border border-amber-200">
-                            Shipping
-                          </span>
-                        </div>
+                            const destCity = b.batch_code.includes('GENUINE')
+                              ? 'St. Jude Central Dispensary, London (GB)'
+                              : b.batch_code.includes('SUSPECT')
+                              ? 'Apollo Health Retail Dispensary, Pune (IN)'
+                              : 'Quarantine Vault (DEG Hazard Notice)';
 
-                        {/* Route Timeline */}
-                        <div className="pl-3.5 space-y-1.5 text-[11px] text-slate-500 border-l border-slate-200 ml-4 py-1">
-                          <div className="flex items-center space-x-2">
-                            <span className="w-2 h-2 rounded-full bg-rose-500 ring-2 ring-white -ml-[17px]" />
-                            <span>Nagpur Pharma Facility, IN</span>
-                          </div>
-                          <div className="flex items-center space-x-2">
-                            <span className="w-2 h-2 rounded-full bg-blue-600 ring-2 ring-white -ml-[17px]" />
-                            <span>MediDist Mumbai Logistics Port, IN</span>
-                          </div>
-                        </div>
-                      </div>
+                            return (
+                              <div
+                                key={b.id}
+                                onClick={() => {
+                                  setSelectedBatchId(b.id);
+                                  setActiveTab('shipping');
+                                }}
+                                className="bg-white border border-slate-200 rounded-xl p-3.5 space-y-2 hover:border-blue-400 hover:shadow-sm transition shadow-xs cursor-pointer"
+                              >
+                                <div className="flex items-center justify-between">
+                                  <div className="flex items-center space-x-2.5">
+                                    <div
+                                      className={`w-8 h-8 rounded-full flex items-center justify-center font-bold ${
+                                        isRecalled
+                                          ? 'bg-red-50 text-red-600'
+                                          : isSuspect
+                                          ? 'bg-amber-50 text-amber-600'
+                                          : 'bg-emerald-50 text-emerald-600'
+                                      }`}
+                                    >
+                                      {isRecalled ? (
+                                        <ShieldAlert className="w-4 h-4" />
+                                      ) : isSuspect ? (
+                                        <Truck className="w-4 h-4" />
+                                      ) : (
+                                        <Ship className="w-4 h-4" />
+                                      )}
+                                    </div>
+                                    <div>
+                                      <span className="text-[10px] text-slate-400 block font-medium">
+                                        {b.product_name}
+                                      </span>
+                                      <span className="text-xs font-bold text-slate-900 font-mono">
+                                        #{b.batch_code}
+                                      </span>
+                                    </div>
+                                  </div>
+                                  <span
+                                    className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full border ${
+                                      isRecalled
+                                        ? 'text-red-700 bg-red-50 border-red-200'
+                                        : isSuspect
+                                        ? 'text-amber-700 bg-amber-50 border-amber-200'
+                                        : 'text-emerald-700 bg-emerald-50 border-emerald-200'
+                                    }`}
+                                  >
+                                    {isRecalled ? 'RECALLED' : isSold ? 'Delivered' : 'Shipping'}
+                                  </span>
+                                </div>
 
-                      {/* Item 3: Delivered */}
-                      <div className="bg-white border border-slate-200 rounded-xl p-3.5 space-y-2 hover:border-slate-300 transition shadow-xs">
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center space-x-2.5">
-                            <div className="w-8 h-8 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center font-bold">
-                              <Package className="w-4 h-4" />
-                            </div>
-                            <div>
-                              <span className="text-[10px] text-slate-400 block font-medium">Ship Freight</span>
-                              <span className="text-xs font-bold text-slate-900 font-mono">#5635-342810</span>
-                            </div>
-                          </div>
-                          <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2.5 py-0.5 rounded-full border border-emerald-200">
-                            Delivered
-                          </span>
-                        </div>
+                                {/* Route Timeline */}
+                                <div className="pl-3.5 space-y-1.5 text-[11px] text-slate-500 border-l border-slate-200 ml-4 py-1">
+                                  <div className="flex items-center space-x-2">
+                                    <span className="w-2 h-2 rounded-full bg-rose-500 ring-2 ring-white -ml-[17px]" />
+                                    <span className="truncate">{originCity}</span>
+                                  </div>
+                                  <div className="flex items-center space-x-2">
+                                    <span
+                                      className={`w-2 h-2 rounded-full ring-2 ring-white -ml-[17px] ${
+                                        isRecalled ? 'bg-red-600' : 'bg-blue-600'
+                                      }`}
+                                    />
+                                    <span className="truncate">{destCity}</span>
+                                  </div>
+                                </div>
 
-                        {/* Route Timeline */}
-                        <div className="pl-3.5 space-y-1.5 text-[11px] text-slate-500 border-l border-slate-200 ml-4 py-1">
-                          <div className="flex items-center space-x-2">
-                            <span className="w-2 h-2 rounded-full bg-rose-500 ring-2 ring-white -ml-[17px]" />
-                            <span>Messina Harbor, Sicily, Italy</span>
-                          </div>
-                          <div className="flex items-center space-x-2">
-                            <span className="w-2 h-2 rounded-full bg-blue-600 ring-2 ring-white -ml-[17px]" />
-                            <span>Tallinn Central Distribution, EST</span>
-                          </div>
-                        </div>
-                      </div>
+                                {isSuspect && (
+                                  <div className="text-[10px] font-semibold text-amber-700 bg-amber-50/70 px-2 py-0.5 rounded border border-amber-200/60 flex items-center space-x-1">
+                                    <AlertTriangle className="w-3 h-3 text-amber-600 shrink-0" />
+                                    <span>Rule R7: 12 Cartons Missing in Transit</span>
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })
+                      ) : (
+                        <div className="p-4 text-center text-xs text-slate-400">No shipments found.</div>
+                      )}
 
-                      {/* Item 4: Anomaly alert item if alerts exist */}
+                      {/* Active Anomaly Alert Card if any alerts exist */}
                       {alerts.length > 0 && (
                         <div className="bg-rose-50/50 border border-rose-200 rounded-xl p-3.5 space-y-2">
                           <div className="flex items-center justify-between">
@@ -1188,6 +1516,39 @@ export default function App() {
                     <p className="text-xs text-slate-500">
                       Simulate a smartphone scanning a GS1 Digital Link QR code. Select different locations to test geo-velocity impossible travel.
                     </p>
+
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <label className="text-xs font-semibold text-slate-700">Quick Select Batch Unit</label>
+                        <span className="text-[10px] text-slate-400">1-Click Telemetry Feed</span>
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                        <button
+                          type="button"
+                          onClick={() => handleDemoVerify('LOT-GENUINE-2026', 'London')}
+                          className="px-2.5 py-1.5 rounded-lg border border-emerald-200 bg-emerald-50/70 hover:bg-emerald-100 text-emerald-900 text-[11px] font-semibold text-left transition"
+                        >
+                          🟢 LOT-GENUINE-2026
+                          <span className="block text-[9px] text-emerald-600 font-normal">Genuine mRNA</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleDemoVerify('LOT-SUSPECT-7741', 'Mumbai')}
+                          className="px-2.5 py-1.5 rounded-lg border border-amber-200 bg-amber-50/70 hover:bg-amber-100 text-amber-900 text-[11px] font-semibold text-left transition"
+                        >
+                          🔴 LOT-SUSPECT-7741
+                          <span className="block text-[9px] text-amber-600 font-normal">Cloned QR Attack</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleDemoVerify('LOT-RECALL-9012', 'Berlin')}
+                          className="px-2.5 py-1.5 rounded-lg border border-red-200 bg-red-50/70 hover:bg-red-100 text-red-900 text-[11px] font-semibold text-left transition"
+                        >
+                          ⚠️ LOT-RECALL-9012
+                          <span className="block text-[9px] text-red-600 font-normal">Toxicity Recall</span>
+                        </button>
+                      </div>
+                    </div>
 
                     <div className="space-y-1.5">
                       <label className="text-xs font-semibold text-slate-700">Unit Token or Code</label>
@@ -1550,67 +1911,83 @@ export default function App() {
                   <p className="text-rose-900">{chainStatus.reason}</p>
                 </div>
               )}
-            </div>
-          )}
+              {/* Settings: Ledger Demo Data & Heuristics Controls */}
+              <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-xs space-y-5">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 pb-4">
+                  <div>
+                    <h4 className="font-bold text-sm text-slate-900">Ledger Demo Data &amp; Engine Controls</h4>
+                    <p className="text-xs text-slate-500">
+                      Populate or reset real cryptographic batches. All data feeds directly into Dashboard KPI cards, Shipment History, and Verification.
+                    </p>
+                  </div>
+                  <div className="flex items-center space-x-2 shrink-0">
+                    <button
+                      disabled={loading}
+                      onClick={async () => {
+                        setLoading(true);
+                        setStatusMessage('Populating HackNova PS-05 demo batches into ledger...');
+                        try {
+                          await fetch('/api/demo/seed-full', { method: 'POST' });
+                          await fetchInitialData();
+                          setStatusMessage('Demo data fed directly into Dashboard, Shipments, GS1 Orders, and Verification UI!');
+                        } catch (err: any) {
+                          setStatusMessage(`Seeding failed: ${err.message}`);
+                        } finally {
+                          setLoading(false);
+                        }
+                      }}
+                      className="px-3.5 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-xl transition shadow-sm flex items-center space-x-1.5 cursor-pointer"
+                    >
+                      <Zap className="w-3.5 h-3.5" />
+                      <span>{loading ? 'Populating...' : '⚡ Populate Demo Data'}</span>
+                    </button>
 
-          {/* TAB: USER GUIDE & 1-CLICK DEMO */}
-          {activeTab === 'guide' && (
-            <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-xs space-y-6">
-              <div className="border-b border-slate-100 pb-4">
-                <h3 className="font-bold text-base text-slate-900">1-Click Storyline Demo &amp; Benchmark</h3>
-                <p className="text-xs text-slate-500">
-                  Execute the complete HackNova PS-05 presentation storyline in one click.
-                </p>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <button
-                  disabled={loading}
-                  onClick={runGoldenPath}
-                  className="p-4 rounded-xl border border-slate-200 hover:border-blue-300 hover:bg-blue-50/40 text-left transition space-y-2"
-                >
-                  <span className="text-[10px] font-bold uppercase text-blue-600">Step 1</span>
-                  <h4 className="font-bold text-sm text-slate-900">Run Golden Path</h4>
-                  <p className="text-xs text-slate-500">
-                    Commissions batch LOT42, signs 8 Ed25519 events, and triggers R7 quantity mismatch.
-                  </p>
-                </button>
-
-                <button
-                  disabled={loading}
-                  onClick={runCounterfeitInjection}
-                  className="p-4 rounded-xl border border-slate-200 hover:border-rose-300 hover:bg-rose-50/40 text-left transition space-y-2"
-                >
-                  <span className="text-[10px] font-bold uppercase text-rose-600">Step 2</span>
-                  <h4 className="font-bold text-sm text-slate-900">Inject Counterfeit Clone</h4>
-                  <p className="text-xs text-slate-500">
-                    Scans genuine code in Berlin, then scans photocopy 20 min later in Lagos (triggers R4 Impossible Travel).
-                  </p>
-                </button>
-
-                <button
-                  disabled={loading}
-                  onClick={chainStatus?.ok === false ? runRestoreTest : runTamperTest}
-                  className="p-4 rounded-xl border border-slate-200 hover:border-indigo-300 hover:bg-indigo-50/40 text-left transition space-y-2"
-                >
-                  <span className="text-[10px] font-bold uppercase text-indigo-600">Step 3</span>
-                  <h4 className="font-bold text-sm text-slate-900">
-                    {chainStatus?.ok === false ? 'Restore Chain' : 'Test DB Tamper'}
-                  </h4>
-                  <p className="text-xs text-slate-500">
-                    Mutates an event body directly in PostgreSQL; audits detect the exact broken event ID.
-                  </p>
-                </button>
-              </div>
-
-              {demoOutput && (
-                <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-2">
-                  <span className="text-xs font-bold text-slate-700">Latest Execution Response:</span>
-                  <pre className="text-[11px] font-mono text-slate-600 overflow-x-auto">
-                    {JSON.stringify(demoOutput, null, 2)}
-                  </pre>
+                    <button
+                      disabled={loading}
+                      onClick={async () => {
+                        if (!window.confirm('Reset ledger to clean state?')) return;
+                        setLoading(true);
+                        try {
+                          await fetch('/api/demo/reset', { method: 'POST' });
+                          await fetchInitialData();
+                          setStatusMessage('Ledger reset to blank state.');
+                        } catch (err: any) {
+                          setStatusMessage(`Reset error: ${err.message}`);
+                        } finally {
+                          setLoading(false);
+                        }
+                      }}
+                      className="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-xs rounded-xl transition cursor-pointer"
+                      title="Reset Ledger"
+                    >
+                      <RotateCcw className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
                 </div>
-              )}
+
+                {/* Heuristic Parameter Controls */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-2">
+                    <div className="flex items-center justify-between text-xs font-semibold text-slate-800">
+                      <span>Max Travel Velocity (Rule R4)</span>
+                      <span className="font-mono text-blue-600 font-bold">900 km/h</span>
+                    </div>
+                    <p className="text-[11px] text-slate-500">
+                      Consecutive scans exceeding 900 km/h trigger the Impossible Travel clone alert on the Recharts graph and D3 map.
+                    </p>
+                  </div>
+
+                  <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-2">
+                    <div className="flex items-center justify-between text-xs font-semibold text-slate-800">
+                      <span>Scan Diversity Scrutiny (Rule R5)</span>
+                      <span className="font-mono text-indigo-600 font-bold">4+ Scans</span>
+                    </div>
+                    <p className="text-[11px] text-slate-500">
+                      Flags excessive consumer scans across multiple distinct physical devices post-retail sale.
+                    </p>
+                  </div>
+                </div>
+              </div>
             </div>
           )}
         </main>

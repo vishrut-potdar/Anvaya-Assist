@@ -7,6 +7,7 @@ import { HttpError } from '../errors.ts';
 import { parseUnitToken, verifyChain, verifyGs1Token } from '../crypto.ts';
 import { calculateRiskScore, RULES, BuyerVerdict } from '../rules.ts';
 import { broadcastAlert } from '../sse.ts';
+import { redis } from '../redis.ts';
 
 const router = Router();
 

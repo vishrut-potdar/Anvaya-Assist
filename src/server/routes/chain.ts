@@ -34,17 +34,62 @@ router.get('/verify', async (req, res, next) => {
     if (events.length === 0) {
       return res.json({
         ok: true,
+        valid: true,
         message: 'No events recorded in ledger yet',
         totalEventsChecked: 0,
       });
     }
 
-    const audit: ChainVerificationResult = verifyChain(events);
-    res.json({
-      ...audit,
+    if (batchId) {
+      const audit: ChainVerificationResult = verifyChain(events);
+      return res.json({
+        ...audit,
+        valid: audit.ok,
+        totalEvents: events.length,
+        latestHash: events[events.length - 1].hash,
+        genesis: events[0].prev_hash,
+      });
+    }
+
+    // Global audit: verify each batch's hash chain
+    const batchGroups = new Map<string, typeof events>();
+    for (const e of events) {
+      const list = batchGroups.get(e.batch_id) || [];
+      list.push(e);
+      batchGroups.set(e.batch_id, list);
+    }
+
+    let allOk = true;
+    let failureDetail: any = null;
+    let totalChecked = 0;
+
+    for (const [bId, bEvents] of batchGroups.entries()) {
+      const audit = verifyChain(bEvents);
+      totalChecked += audit.totalEventsChecked;
+      if (!audit.ok) {
+        allOk = false;
+        failureDetail = { ...audit, batchId: bId };
+        break;
+      }
+    }
+
+    if (!allOk) {
+      return res.json({
+        ok: false,
+        valid: false,
+        ...failureDetail,
+        totalEvents: events.length,
+      });
+    }
+
+    return res.json({
+      ok: true,
+      valid: true,
       totalEvents: events.length,
+      totalEventsChecked: totalChecked,
+      batchesAudited: batchGroups.size,
       latestHash: events[events.length - 1].hash,
-      genesis: events[0].prev_hash,
+      genesis: 'GENESIS',
     });
   } catch (err) {
     next(err);
