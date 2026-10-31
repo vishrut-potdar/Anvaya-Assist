@@ -33,6 +33,9 @@ const health: express.RequestHandler = (_req, res) => {
     timestamp: new Date().toISOString(),
     // 'shared' = external Postgres; 'in-memory' = per-instance PGlite (data not shared across serverless instances)
     database: config.databaseUrl ? 'shared' : 'in-memory',
+    // Names only (never values) of DB-related env vars this instance can see, to debug hosting config
+    dbEnvNames: Object.keys(process.env).filter((k) => /DATABASE|POSTGRES|^PG|NEON/i.test(k)).sort(),
+    vercelEnv: process.env.VERCEL_ENV || null,
   });
 };
 app.get('/health', health);
