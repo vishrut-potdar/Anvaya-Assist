@@ -142,6 +142,17 @@ export default function App() {
   const [verifyResult, setVerifyResult] = useState<any>(null);
   const [verifyLoading, setVerifyLoading] = useState(false);
 
+  // 3 Persona Modes in One UI: Manufacturer/Retail, Logistics, Consumer
+  const [personaMode, setPersonaMode] = useState<'manufacturer' | 'logistics' | 'consumer'>('manufacturer');
+
+  // Anti-Scam Return States
+  const [returnTokenInput, setReturnTokenInput] = useState('');
+  const [returnReason, setReturnReason] = useState('Damaged or suspect package seal upon receipt');
+  const [returnCustomerNotes, setReturnCustomerNotes] = useState('');
+  const [returnAuthData, setReturnAuthData] = useState<any>(null);
+  const [returnProcessResult, setReturnProcessResult] = useState<any>(null);
+  const [returnLoading, setReturnLoading] = useState(false);
+
   // Demo & Recall states
   const [demoOutput, setDemoOutput] = useState<any>(null);
   const [recallTrace, setRecallTrace] = useState<any>(null);
@@ -393,6 +404,70 @@ export default function App() {
       handleRecallTrace(b.id);
     } else {
       setActiveTab('order');
+    }
+  }
+
+  // Anti-Scam Return: Initiate a cryptographically authorized return
+  async function handleInitiateReturn() {
+    if (!returnTokenInput.trim()) {
+      setStatusMessage('Please select or paste a package verification token first.');
+      return;
+    }
+    setReturnLoading(true);
+    try {
+      const res = await fetch('/api/returns/initiate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          token: returnTokenInput.trim(),
+          reason: returnReason,
+          customerNotes: returnCustomerNotes,
+        }),
+      }).then((r) => r.json());
+
+      if (res.ok) {
+        setReturnAuthData(res);
+        setReturnProcessResult(null);
+        setStatusMessage(`✅ Return Authorization generated: ${res.returnAuthCode}. Anti-Scam reverse-custody token active!`);
+      } else {
+        setStatusMessage(`Return initiation failed: ${res.message || res.error}`);
+      }
+    } catch (err: any) {
+      setStatusMessage('Return error: ' + err.message);
+    } finally {
+      setReturnLoading(false);
+    }
+  }
+
+  // Anti-Scam Return: Process return inspection at warehouse/apothecary
+  async function handleProcessReturn(isScamSimulation = false) {
+    if (!returnTokenInput.trim() || !returnAuthData?.returnAuthCode) {
+      setStatusMessage('Please initiate the return authorization first.');
+      return;
+    }
+    setReturnLoading(true);
+    try {
+      const res = await fetch('/api/returns/process', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          token: returnTokenInput.trim(),
+          returnAuthCode: returnAuthData.returnAuthCode,
+          isScamSimulation,
+        }),
+      }).then((r) => r.json());
+
+      setReturnProcessResult(res);
+      if (res.fraudDetected) {
+        setStatusMessage(`⚠️ ANTI-SCAM ALERT: ${res.message}`);
+      } else {
+        setStatusMessage(`✅ ${res.message}`);
+      }
+      await fetchInitialData();
+    } catch (err: any) {
+      setStatusMessage('Return processing error: ' + err.message);
+    } finally {
+      setReturnLoading(false);
     }
   }
 
@@ -720,14 +795,71 @@ export default function App() {
 
       {/* ================= MAIN CONTAINER ================= */}
       <div className="flex-1 flex flex-col min-w-0 overflow-y-auto">
-        {/* Top Header Bar (Matching Screenshot) */}
-        <header className="no-print bg-white border-b border-slate-200 px-8 py-3.5 flex items-center justify-between sticky top-0 z-30">
+        {/* Top Header Bar (Matching Screenshot with 3 Mode Switcher) */}
+        <header className="no-print bg-white border-b border-slate-200 px-8 py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 sticky top-0 z-30">
           <div>
-            <h1 className="text-xl font-bold text-slate-900 tracking-tight">Dashboard</h1>
-            <p className="text-xs text-slate-400">Home Couriers System &bull; Sunday, October 2026</p>
+            <div className="flex items-center space-x-2">
+              <h1 className="text-xl font-bold text-slate-900 tracking-tight">ProvChain</h1>
+              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 border border-slate-200">
+                {personaMode === 'manufacturer' ? '🏭 Manufacturer / Retail' : personaMode === 'logistics' ? '🚚 Logistics Transit' : '🛡️ Consumer Portal'}
+              </span>
+            </div>
+            <p className="text-xs text-slate-400">
+              {personaMode === 'manufacturer' && 'Master Product Data, Batch Lineage & GS1 QR Serialization'}
+              {personaMode === 'logistics' && 'Transportation Management, Cold-Chain Waypoints & Custody Transfers'}
+              {personaMode === 'consumer' && 'Instant Package Authenticator (Fake vs Genuine) & Anti-Scam Return Way'}
+            </p>
           </div>
 
-          <div className="flex items-center space-x-4">
+          {/* Mode Switcher Segmented Control */}
+          <div className="flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200 text-xs font-semibold select-none">
+            <button
+              onClick={() => {
+                setPersonaMode('manufacturer');
+                setActiveTab('order');
+              }}
+              className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg transition cursor-pointer ${
+                personaMode === 'manufacturer'
+                  ? 'bg-blue-600 text-white shadow-sm'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <Factory className="w-3.5 h-3.5" />
+              <span>Manufacturer &amp; Retail</span>
+            </button>
+
+            <button
+              onClick={() => {
+                setPersonaMode('logistics');
+                setActiveTab('shipping');
+              }}
+              className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg transition cursor-pointer ${
+                personaMode === 'logistics'
+                  ? 'bg-indigo-600 text-white shadow-sm'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <Truck className="w-3.5 h-3.5" />
+              <span>Logistics</span>
+            </button>
+
+            <button
+              onClick={() => {
+                setPersonaMode('consumer');
+                setActiveTab('delivery');
+              }}
+              className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg transition cursor-pointer ${
+                personaMode === 'consumer'
+                  ? 'bg-emerald-600 text-white shadow-sm'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <ShieldCheck className="w-3.5 h-3.5" />
+              <span>Consumer &amp; Returns</span>
+            </button>
+          </div>
+
+          <div className="flex items-center space-x-3">
             {/* Pill Search Input with blue circular button */}
             <div className="relative flex items-center">
               <input
@@ -735,7 +867,7 @@ export default function App() {
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 placeholder="Search..."
-                className="bg-white border border-slate-200 rounded-full pl-4 pr-10 py-1.5 text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:border-blue-500 w-64 shadow-xs"
+                className="bg-white border border-slate-200 rounded-full pl-4 pr-10 py-1.5 text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:border-blue-500 w-48 sm:w-56 shadow-xs"
               />
               <button className="absolute right-1 w-6 h-6 rounded-full bg-blue-600 text-white flex items-center justify-center hover:bg-blue-700 transition">
                 <Search className="w-3.5 h-3.5" />
@@ -754,15 +886,6 @@ export default function App() {
               )}
             </button>
 
-            {/* Message Mail Icon */}
-            <button
-              onClick={() => setActiveTab('shipping')}
-              className="p-2 rounded-full hover:bg-slate-100 text-slate-600 transition"
-              title="Shipments"
-            >
-              <Mail className="w-4 h-4" />
-            </button>
-
             {/* Refresh */}
             <button
               onClick={() => fetchInitialData()}
@@ -773,6 +896,30 @@ export default function App() {
             </button>
           </div>
         </header>
+
+        {/* Persona Mode Banner */}
+        <div className={`px-8 py-2.5 text-xs border-b flex items-center justify-between ${
+          personaMode === 'manufacturer'
+            ? 'bg-blue-50/80 border-blue-200 text-blue-900'
+            : personaMode === 'logistics'
+            ? 'bg-indigo-50/80 border-indigo-200 text-indigo-900'
+            : 'bg-emerald-50/80 border-emerald-200 text-emerald-900'
+        }`}>
+          <div className="flex items-center space-x-2">
+            {personaMode === 'manufacturer' && <Factory className="w-4 h-4 text-blue-600" />}
+            {personaMode === 'logistics' && <Truck className="w-4 h-4 text-indigo-600" />}
+            {personaMode === 'consumer' && <ShieldCheck className="w-4 h-4 text-emerald-600" />}
+            <span className="font-semibold">
+              {personaMode === 'manufacturer' && 'Mode 1: Manufacturer & Retailer Portal — Full access to Master Product Data, GTIN specs, Ed25519 serial signing, GS1 QR sticker generation, and recall containment.'}
+              {personaMode === 'logistics' && 'Mode 2: Logistics Transit Management — Real-time waypoint logging, custody handoff confirmations, reefer cold-chain telemetry, and quantity reconciliation.'}
+              {personaMode === 'consumer' && 'Mode 3: Consumer Package Authenticator & Anti-Scam Return Way — Scan & verify authentic medicine from clones, plus cryptographically authorized return portal to eliminate return fraud.'}
+            </span>
+          </div>
+
+          <div className="flex items-center space-x-2">
+            <span className="text-[11px] font-mono opacity-75">ProvChain v1.2</span>
+          </div>
+        </div>
 
         {/* Global status banner */}
         {statusMessage && (
@@ -1695,6 +1842,242 @@ export default function App() {
                 onSimulateScan={(city) => handleVerify(undefined, city)}
                 isLoading={verifyLoading}
               />
+
+              {/* ======================================================== */}
+              {/* ANTI-SCAM RETURN WAY (REVERSE LOGISTICS ANTI-FRAUD PORTAL) */}
+              {/* ======================================================== */}
+              <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-xs space-y-6">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-4">
+                  <div className="flex items-center space-x-3">
+                    <div className="w-10 h-10 rounded-xl bg-indigo-50 border border-indigo-200 text-indigo-600 flex items-center justify-center">
+                      <RotateCcw className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <div className="flex items-center space-x-2">
+                        <h3 className="font-bold text-base text-slate-900">Anti-Scam Return Protocol</h3>
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">
+                          Zero-Fraud Reverse Logistics
+                        </span>
+                      </div>
+                      <p className="text-xs text-slate-500">
+                        Cryptographically locks package credentials to prevent item-swapping fraud, clone returns, and empty-box scams.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center space-x-2">
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        const genuine = batches.find((b) => b.batch_code.includes('GENUINE'));
+                        if (genuine) {
+                          try {
+                            const uRes = await fetch(`/api/batches/${genuine.id}/units?limit=1`).then((r) => r.json());
+                            if (uRes.ok && uRes.units?.[0]) {
+                              setReturnTokenInput(uRes.units[0].token);
+                              setStatusMessage('Loaded LOT-GENUINE-2026 Serial #1 for return testing.');
+                            }
+                          } catch (e) {
+                            console.error(e);
+                          }
+                        }
+                      }}
+                      className="px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-xl text-xs font-semibold transition cursor-pointer"
+                    >
+                      ⚡ Quick Fill Genuine Unit
+                    </button>
+                  </div>
+                </div>
+
+                {/* 3-Pillar Anti-Scam Protocol Highlights */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="bg-slate-50 border border-slate-200/80 rounded-xl p-4 space-y-1.5">
+                    <div className="flex items-center space-x-2 text-indigo-600 font-bold text-xs">
+                      <Lock className="w-4 h-4" />
+                      <span>1. Single-Use RA Binding</span>
+                    </div>
+                    <p className="text-[11px] text-slate-500 leading-relaxed">
+                      Generates a cryptographically signed Return Authorization token that can only be used once, preventing duplicate label reuse scams.
+                    </p>
+                  </div>
+
+                  <div className="bg-slate-50 border border-slate-200/80 rounded-xl p-4 space-y-1.5">
+                    <div className="flex items-center space-x-2 text-blue-600 font-bold text-xs">
+                      <ShieldCheck className="w-4 h-4" />
+                      <span>2. Tamper Seal HMAC Check</span>
+                    </div>
+                    <p className="text-[11px] text-slate-500 leading-relaxed">
+                      Reconciles the returned physical unit with the original manufacturing seal hash to detect counterfeit surrogate substitutions.
+                    </p>
+                  </div>
+
+                  <div className="bg-slate-50 border border-slate-200/80 rounded-xl p-4 space-y-1.5">
+                    <div className="flex items-center space-x-2 text-rose-600 font-bold text-xs">
+                      <ShieldAlert className="w-4 h-4" />
+                      <span>3. Instant Fraud Freeze</span>
+                    </div>
+                    <p className="text-[11px] text-slate-500 leading-relaxed">
+                      If an unauthorized item or tampered barcode is presented, refund is immediately frozen and an R8 alert is broadcast on the ledger.
+                    </p>
+                  </div>
+                </div>
+
+                {/* Return Form Grid */}
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                  {/* Left Column: Return Request Inputs */}
+                  <div className="lg:col-span-6 space-y-4">
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-semibold text-slate-700">Package Verification Token to Return</label>
+                      <input
+                        type="text"
+                        value={returnTokenInput}
+                        onChange={(e) => setReturnTokenInput(e.target.value)}
+                        placeholder="Paste unit token (e.g. 50ff0c82-...hmac)"
+                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2 text-xs font-mono text-slate-800 focus:outline-none focus:border-indigo-500"
+                      />
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-semibold text-slate-700">Reason for Return</label>
+                      <select
+                        value={returnReason}
+                        onChange={(e) => setReturnReason(e.target.value)}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2 text-xs text-slate-800 focus:outline-none focus:border-indigo-500"
+                      >
+                        <option value="Damaged or suspect package seal upon receipt">Damaged or suspect package seal upon receipt</option>
+                        <option value="Suspected cold-chain temperature breach in transit">Suspected cold-chain temperature breach in transit</option>
+                        <option value="Product recall notification compliance">Product recall notification compliance</option>
+                        <option value="Incorrect prescription or dosage delivered">Incorrect prescription or dosage delivered</option>
+                        <option value="Unopened consumer cancellation within return window">Unopened consumer cancellation within return window</option>
+                      </select>
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-semibold text-slate-700">Customer Return Inspection Notes</label>
+                      <input
+                        type="text"
+                        value={returnCustomerNotes}
+                        onChange={(e) => setReturnCustomerNotes(e.target.value)}
+                        placeholder="e.g. Vial seal intact, box corner crumpled during air freight"
+                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2 text-xs text-slate-800 focus:outline-none focus:border-indigo-500"
+                      />
+                    </div>
+
+                    <button
+                      onClick={handleInitiateReturn}
+                      disabled={returnLoading || !returnTokenInput}
+                      className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-bold rounded-xl text-xs transition flex items-center justify-center space-x-2 shadow-md shadow-indigo-500/20 cursor-pointer"
+                    >
+                      {returnLoading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
+                      <span>Generate Cryptographic Return Authorization (RA)</span>
+                    </button>
+                  </div>
+
+                  {/* Right Column: Return Authorization Certificate & Inspection Controls */}
+                  <div className="lg:col-span-6 space-y-4">
+                    {returnAuthData ? (
+                      <div className="border border-indigo-200 bg-gradient-to-br from-indigo-50/50 to-white rounded-xl p-5 space-y-4">
+                        <div className="flex items-start justify-between border-b border-indigo-100 pb-3">
+                          <div>
+                            <span className="text-[10px] uppercase font-bold tracking-wider text-indigo-600 block">
+                              Verified Return Authorization Certificate
+                            </span>
+                            <span className="text-sm font-bold text-slate-900 font-mono">
+                              {returnAuthData.returnAuthCode}
+                            </span>
+                          </div>
+                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700">
+                            Active RA
+                          </span>
+                        </div>
+
+                        <div className="flex items-center space-x-4">
+                          {returnAuthData.qrDataUrl && (
+                            <img
+                              src={returnAuthData.qrDataUrl}
+                              alt="Return QR"
+                              className="w-24 h-24 rounded-lg border border-slate-200 p-1 bg-white shadow-xs"
+                            />
+                          )}
+                          <div className="space-y-1 text-xs">
+                            <div>
+                              <span className="text-slate-400 block text-[10px]">Product</span>
+                              <span className="font-semibold text-slate-900">{returnAuthData.productName}</span>
+                            </div>
+                            <div>
+                              <span className="text-slate-400 block text-[10px]">Batch &amp; Serial</span>
+                              <span className="font-mono text-slate-700">
+                                #{returnAuthData.batchCode} &bull; Unit #{returnAuthData.serial}
+                              </span>
+                            </div>
+                            <div>
+                              <span className="text-slate-400 block text-[10px]">Manufacturer</span>
+                              <span className="text-slate-700">{returnAuthData.manufacturer}</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Test Inspection Simulation Controls */}
+                        <div className="pt-2 border-t border-indigo-100 space-y-2">
+                          <span className="text-xs font-bold text-slate-800 block">
+                            Warehouse Physical Inbound Audit:
+                          </span>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                            <button
+                              onClick={() => handleProcessReturn(false)}
+                              disabled={returnLoading}
+                              className="py-2 px-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition flex items-center justify-center space-x-1.5 shadow-xs cursor-pointer"
+                            >
+                              <CheckCircle2 className="w-4 h-4" />
+                              <span>Verify &amp; Authorize Refund</span>
+                            </button>
+
+                            <button
+                              onClick={() => handleProcessReturn(true)}
+                              disabled={returnLoading}
+                              className="py-2 px-3 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold transition flex items-center justify-center space-x-1.5 shadow-xs cursor-pointer"
+                            >
+                              <ShieldAlert className="w-4 h-4" />
+                              <span>Simulate Scam Attack</span>
+                            </button>
+                          </div>
+                          <span className="text-[10px] text-slate-400 block text-center">
+                            Simulate physical HMAC seal verification vs counterfeit surrogate substitution
+                          </span>
+                        </div>
+
+                        {/* Return Process Result Display */}
+                        {returnProcessResult && (
+                          <div className={`p-3.5 rounded-xl border text-xs space-y-1 ${
+                            returnProcessResult.fraudDetected
+                              ? 'bg-rose-50 border-rose-200 text-rose-900'
+                              : 'bg-emerald-50 border-emerald-200 text-emerald-900'
+                          }`}>
+                            <div className="flex items-center space-x-2 font-bold">
+                              {returnProcessResult.fraudDetected ? (
+                                <ShieldAlert className="w-4 h-4 text-rose-600" />
+                              ) : (
+                                <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                              )}
+                              <span>{returnProcessResult.verdict}</span>
+                            </div>
+                            <p className="text-[11px] leading-relaxed">
+                              {returnProcessResult.message}
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="border border-dashed border-slate-200 rounded-xl p-8 text-center text-slate-400 space-y-2 h-full flex flex-col items-center justify-center">
+                        <RotateCcw className="w-8 h-8 text-slate-300" />
+                        <p className="text-xs">
+                          Click &ldquo;Quick Fill Genuine Unit&rdquo; and click &ldquo;Generate Cryptographic Return Authorization&rdquo; to test anti-scam reverse logistics.
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
             </div>
           )}
 
