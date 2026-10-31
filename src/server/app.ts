@@ -1,5 +1,6 @@
 import express from 'express';
 import { initDatabase } from './db.ts';
+import { config } from './config.ts';
 import { errorHandler } from './errors.ts';
 
 import partnersRoutes from './routes/partners.ts';
@@ -30,7 +31,8 @@ const health: express.RequestHandler = (_req, res) => {
     ok: true,
     service: 'ProvChain Provenance Ledger API',
     timestamp: new Date().toISOString(),
-    engine: 'PostgreSQL 16 (PGlite/Node)',
+    // 'shared' = external Postgres; 'in-memory' = per-instance PGlite (data not shared across serverless instances)
+    database: config.databaseUrl ? 'shared' : 'in-memory',
   });
 };
 app.get('/health', health);
